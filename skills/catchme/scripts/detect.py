@@ -121,7 +121,7 @@ def detect_spring(root):
             "SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE": "{pool}",
         },
         "default_pool": 10,
-        "default_env": {"JAVA_TOOL_OPTIONS": "-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"},
+        "default_env": {},  # JVM flags must mirror production (Dockerfile / task definition), not a guess
         "score": 10,
     }
 

@@ -22,9 +22,12 @@ If the app uses a custom property for the URL or a profile, add it to `project.j
 If the app uses `ddl-auto=create`, set `SPRING_JPA_HIBERNATE_DDL_AUTO=update` so restarts keep seeded data.
 
 ## Memory — production gotcha
-The JVM is container-aware but defaults the heap to 25% of the limit. Production usually sets
-`-XX:MaxRAMPercentage=75`. Mirror production in `app.env`:
-`JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError`.
+The JVM is container-aware and defaults the heap to 25% of the memory limit (256 MB of 1 GB).
+Use **exactly the JVM flags production uses** — look in the Dockerfile `ENTRYPOINT`/`CMD`,
+`JAVA_TOOL_OPTIONS` / `JAVA_OPTS` in the ECS task definition or k8s manifest — and put them in
+`app.env`. If production sets none, set none: a guessed `-XX:MaxRAMPercentage=75` gives the test a
+3× bigger heap than production and hides (or invents) OOM kills. With the default 25%, unpaginated
+endpoints at 0.5 vCPU / 1 GB can get the container OOM-killed at a handful of concurrent requests.
 Also note `ActiveProcessorCount` follows `cpus` — with 0.5 vCPU, the JVM sees 1 CPU → small
 common pool / Tomcat behavior differs from the laptop.
 
