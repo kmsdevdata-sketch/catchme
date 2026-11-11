@@ -1,0 +1,21 @@
+# AWS ECS Fargate task sizes (task-level cpu/memory).
+# cpus = vCPU, memory_mb = task memory. Fargate CPU performance varies by host generation (not modeled).
+kind: app
+provider: ecs-fargate
+sizes:
+  0.25vcpu-0.5gb: {cpus: 0.25, memory_mb: 512}
+  0.25vcpu-1gb: {cpus: 0.25, memory_mb: 1024}
+  0.25vcpu-2gb: {cpus: 0.25, memory_mb: 2048}
+  0.5vcpu-1gb: {cpus: 0.5, memory_mb: 1024}
+  0.5vcpu-2gb: {cpus: 0.5, memory_mb: 2048}
+  0.5vcpu-3gb: {cpus: 0.5, memory_mb: 3072}
+  0.5vcpu-4gb: {cpus: 0.5, memory_mb: 4096}
+  1vcpu-2gb: {cpus: 1, memory_mb: 2048}
+  1vcpu-4gb: {cpus: 1, memory_mb: 4096}
+  1vcpu-8gb: {cpus: 1, memory_mb: 8192}
+  2vcpu-4gb: {cpus: 2, memory_mb: 4096}
+  2vcpu-8gb: {cpus: 2, memory_mb: 8192}
+  2vcpu-16gb: {cpus: 2, memory_mb: 16384}
+  4vcpu-8gb: {cpus: 4, memory_mb: 8192}
+  4vcpu-16gb: {cpus: 4, memory_mb: 16384}
+  4vcpu-30gb: {cpus: 4, memory_mb: 30720}

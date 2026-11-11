@@ -1,0 +1,23 @@
+# demo-shop seed — every test user's password is "catchme-test" (scrypt hash below).
+seed: 42
+
+tables:
+  User: 1000
+  Product: 1000
+  Order: 1000000
+  OrderItem: 2000000
+
+overrides:
+  User:
+    email: "'user' || i || '@catchme.test'"
+    name: "'Test User ' || i"
+    passwordHash: "'scrypt$c4tchm3d3m0s4lt$40060ed68709d92e7b0a6f22ff108fd3c043520dd1a22d0499b7ad6166c7f82955d956d3cd11b7dcd0d62c4fb84edf24d21b859c09fda8941ff508a3b970fde7'"
+  Product:
+    name: "'Product ' || i"
+    price: "1000 + (i % 50) * 100"
+    stock: "CASE WHEN i = 2 THEN 10 ELSE 100000 END"  # product 2: oversell test
+  Order:
+    status: "(ARRAY['PAID','SHIPPED','CANCELLED'])[1 + (i % 3)]"
+  OrderItem:
+    quantity: "1 + (i % 3)"
+    unitPrice: "1000 + (i % 50) * 100"

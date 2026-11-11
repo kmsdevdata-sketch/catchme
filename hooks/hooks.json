@@ -1,0 +1,17 @@
+{
+  "description": "catchme quick check: queries-per-request regression after editing query-related files (opt-in via `catchme hooks on`)",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/quick-check.sh\"",
+            "timeout": 180
+          }
+        ]
+      }
+    ]
+  }
+}

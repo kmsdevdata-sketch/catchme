@@ -1,0 +1,102 @@
+name: e2e
+
+# Runs the FastAPI demo end to end on Linux and checks that catchme finds the planted bugs.
+# The `no-python` leg hides python3 so the scripts take the python:3.12-slim container path.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax checks
+        run: |
+          bash -n skills/catchme/scripts/catchme hooks/quick-check.sh resources/_tools/*.sh
+          python3 -m py_compile skills/catchme/scripts/*.py
+          for f in skills/catchme/templates/k6/*.js; do node --check "$f"; done
+          python3 -I - <<'EOF'
+          import glob, sys
+          sys.path.insert(0, "skills/catchme/scripts")
+          from _common import read_yaml, load_yaml, dump_yaml
+          for f in glob.glob("skills/catchme/**/*.yaml", recursive=True) + glob.glob("examples/*/.prod-parity/*.yaml"):
+              d = read_yaml(f)
+              assert load_yaml(dump_yaml(d)) == d, f
+          print("yaml ok")
+          EOF
+
+  demo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: [host, no-python]
+    env:
+      CM: ${{ github.workspace }}/skills/catchme/scripts/catchme
+    defaults:
+      run:
+        working-directory: examples/demo-shop-fastapi
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Hide python3 (container fallback)
+        if: matrix.python == 'no-python'
+        run: |
+          mkdir -p "$RUNNER_TEMP/nopy"
+          printf '#!/bin/sh\nexit 1\n' > "$RUNNER_TEMP/nopy/python3"
+          chmod +x "$RUNNER_TEMP/nopy/python3"
+          echo "$RUNNER_TEMP/nopy" >> "$GITHUB_PATH"
+
+      - name: Environment
+        run: |
+          docker version --format '{{.Server.Version}}'; docker compose version
+          if python3 -c 'print(1)' >/dev/null 2>&1; then echo "python3 available"; else echo "python3 hidden"; fi
+
+      - name: init / profile / gen / up
+        run: |
+          "$CM" init
+          "$CM" profile --app-preset ecs-fargate:0.5vcpu-1gb --db-preset rds:db.t3.micro --latency-ms 1
+          "$CM" gen
+          "$CM" up
+          "$CM" status
+
+      - name: seed
+        run: "$CM" seed
+
+      - name: load
+        run: "$CM" load
+
+      - name: report
+        run: |
+          "$CM" report
+          cat .prod-parity/reports/latest.md
+          grep -q "Race condition: invariant \`stock_consistency\` violated" .prod-parity/reports/latest.md
+          grep -q "Race condition: invariant \`no_oversell\` violated" .prod-parity/reports/latest.md
+          grep -q "Possible N+1 on \`orders-list\`" .prod-parity/reports/latest.md
+          grep -q "Possible missing index: Seq Scan on \`orders\`" .prod-parity/reports/latest.md
+
+      - name: safety — refuses a non-local host in app env
+        run: |
+          cp .prod-parity/project.json /tmp/project.json
+          python_cmd=python3; python3 -c 1 2>/dev/null || python_cmd="docker run --rm -i python:3.12-slim python"
+          $python_cmd -c "import json,sys; d=json.load(sys.stdin); d['app']['env']['X_DB']='postgres://u:p@db.prod.example.com/x'; print(json.dumps(d))" < /tmp/project.json > .prod-parity/project.json
+          if "$CM" gen; then echo "gen should have refused"; exit 1; fi
+          cp /tmp/project.json .prod-parity/project.json
+
+      - name: teardown leaves 0 containers
+        if: always()
+        run: |
+          "$CM" teardown
+          test "$(docker ps -aq --filter label=com.docker.compose.project=catchme-demo-shop-fastapi | wc -l)" -eq 0
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-${{ matrix.python }}
+          path: examples/demo-shop-fastapi/.prod-parity/reports/
+          if-no-files-found: ignore

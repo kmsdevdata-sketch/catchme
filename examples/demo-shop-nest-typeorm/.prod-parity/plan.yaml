@@ -1,0 +1,47 @@
+# demo-shop load plan (same scenarios for every stack)
+base_url: http://app:3000
+
+auth:
+  mode: login
+  login_path: /auth/login
+  body: '{"email": "user{n}@catchme.test", "password": "catchme-test"}'
+  token_path: token
+  users: 50
+
+runs:
+  - name: orders-list
+    method: GET
+    path: /orders?limit=20
+    vus: 30
+    duration: 30s
+    quick: true
+
+  - name: product-detail
+    method: GET
+    path: /products/{rand:1-1000}
+    vus: 30
+    duration: 20s
+    quick: true
+
+  - name: order-race
+    script: race.js
+    method: POST
+    path: /orders
+    body: '{"productId": 1, "quantity": 1}'
+    vus: 100
+    invariants: [stock_consistency]
+
+  - name: order-race-low-stock
+    script: race.js
+    method: POST
+    path: /orders
+    body: '{"productId": 2, "quantity": 1}'
+    vus: 100
+    expected_status: [409]
+    invariants: [no_oversell]
+
+breakpoint:
+  run: orders-list
+  start_vus: 5
+  max_vus: 320
+  stage_duration: 20s

@@ -1,0 +1,490 @@
+#!/usr/bin/env bash
+# catchme — production-parity testing in local Docker.
+# Thin orchestration: Docker/psql/k6 calls live here, data transformation lives in the Python scripts.
+# Compatible with bash 3.2 (macOS). Run from the target project root (or set CATCHME_PROJECT).
+set -euo pipefail
+
+self="${BASH_SOURCE[0]}"
+while [ -L "$self" ]; do  # resolve symlinks (e.g. catchme linked into ~/bin); no `readlink -f` on macOS
+  link="$(readlink "$self")"
+  case "$link" in /*) self="$link" ;; *) self="$(dirname "$self")/$link" ;; esac
+done
+CATCHME_HOME="$(cd "$(dirname "$self")/.." && pwd)"
+SCRIPTS="$CATCHME_HOME/scripts"
+PROJECT_ROOT="$(cd "${CATCHME_PROJECT:-$PWD}" && pwd)"
+PP="$PROJECT_ROOT/.prod-parity"
+export CATCHME_UID="$(id -u)" CATCHME_GID="$(id -g)"
+
+c_info=$'\033[36m'; c_warn=$'\033[33m'; c_err=$'\033[31m'; c_off=$'\033[0m'
+[ -t 2 ] || { c_info=""; c_warn=""; c_err=""; c_off=""; }
+log()  { printf '%s[catchme]%s %s\n' "$c_info" "$c_off" "$*" >&2; }
+warn() { printf '%s[catchme] warning:%s %s\n' "$c_warn" "$c_off" "$*" >&2; }
+die()  { printf '%s[catchme] error:%s %s\n' "$c_err" "$c_off" "$*" >&2; exit 1; }
+
+# ----------------------------------------------------------------------------- helpers
+
+py() {
+  local script="$1"; shift
+  if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null; then
+    (cd "$PROJECT_ROOT" && python3 -I "$SCRIPTS/$script" "$@")
+  else
+    # run as the calling user so files in .prod-parity/ stay writable for the user and for k6 (Linux)
+    docker run --rm -i --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PROJECT_ROOT:/work" -v "$CATCHME_HOME:/catchme:ro" \
+      -w /work python:3.12-slim python -I "/catchme/scripts/$script" "$@"
+  fi
+}
+
+need_docker() {
+  command -v docker >/dev/null 2>&1 || die "Docker is required (https://docs.docker.com/get-docker/)"
+  docker info >/dev/null 2>&1 || die "Docker daemon is not running"
+  docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required (docker compose ...)"
+}
+
+project_name() {
+  local base
+  base="$(basename "$PROJECT_ROOT" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-' | sed 's/^-*//; s/-*$//')"
+  printf 'catchme-%s' "${base:-app}"
+}
+
+current_mode() { cat "$PP/state/mode" 2>/dev/null || echo prod; }
+
+load_env() {
+  local mode="${1:-$(current_mode)}"
+  [ -f "$PP/env.$mode.sh" ] || die "missing .prod-parity/env.$mode.sh — run: catchme gen"
+  # shellcheck disable=SC1090
+  . "$PP/env.$mode.sh"
+}
+
+compose() {
+  local file="${CM_COMPOSE_FILE:-docker-compose.yml}"
+  docker compose -p "$(project_name)" --project-directory "$PP" -f "$PP/$file" "$@"
+}
+
+psql_app()  { compose exec -T db psql -U monitor -d app -X -At -q -v ON_ERROR_STOP=1 "$@"; }
+psql_post() { compose exec -T db psql -U monitor -d postgres -X -At -q -v ON_ERROR_STOP=1 "$@"; }
+
+is_up() { [ -n "$(compose ps -q --status running db 2>/dev/null)" ] && [ -n "$(compose ps -q --status running app 2>/dev/null)" ]; }
+
+wait_db() {
+  local i=0
+  until compose exec -T db pg_isready -U app_user -d app >/dev/null 2>&1; do
+    i=$((i + 1)); [ "$i" -gt 90 ] && die "database did not become ready (catchme logs db)"
+    sleep 1
+  done
+  # init script creates role monitor; on a fresh volume give it a moment
+  i=0
+  until psql_app -c 'SELECT 1' >/dev/null 2>&1; do
+    i=$((i + 1)); [ "$i" -gt 30 ] && die "role monitor missing — volume created by another tool? run: catchme teardown"
+    sleep 1
+  done
+}
+
+wait_app() {
+  local url="http://127.0.0.1:${CM_HOST_PORT}${CM_HEALTH_PATH}" i=0 code
+  command -v curl >/dev/null 2>&1 || { warn "curl not found — waiting 30s for the app instead of polling"; sleep 30; return; }
+  log "waiting for app at $url"
+  while :; do
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$url" || true)"
+    case "$code" in 2??|3??|4??) log "app is up (HTTP $code)"; return 0 ;; esac
+    if [ -z "$(compose ps -q --status running app 2>/dev/null)" ]; then
+      compose logs --tail 40 app >&2 || true
+      die "app container exited — fix the Dockerfile / project.json app.env (logs above)"
+    fi
+    i=$((i + 1)); [ "$i" -gt 180 ] && { compose logs --tail 40 app >&2 || true; die "app not reachable after 180s"; }
+    sleep 1
+  done
+}
+
+apply_toxics() {
+  compose exec -T toxiproxy /toxiproxy-cli toxic remove -n catchme_latency postgres >/dev/null 2>&1 || true
+  if [ "${CM_LATENCY_MS:-0}" != "0" ] || [ "${CM_JITTER_MS:-0}" != "0" ]; then
+    compose exec -T toxiproxy /toxiproxy-cli toxic add -t latency -n catchme_latency \
+      -a "latency=${CM_LATENCY_MS}" -a "jitter=${CM_JITTER_MS}" postgres >/dev/null \
+      || die "could not add the Toxiproxy latency toxic"
+    log "app↔db latency: ${CM_LATENCY_MS} ms (jitter ${CM_JITTER_MS} ms)"
+  else
+    log "app↔db latency: none"
+  fi
+}
+
+check_docker_capacity() {
+  local ncpu mem_mb need_cpu need_mem
+  ncpu="$(docker info --format '{{.NCPU}}' 2>/dev/null || echo 0)"
+  mem_mb="$(( $(docker info --format '{{.MemTotal}}' 2>/dev/null || echo 0) / 1048576 ))"
+  need_cpu="$(awk "BEGIN{print ${CM_APP_CPUS:-0} + ${CM_DB_CPUS:-0} + 1}")"
+  need_mem="$(( ${CM_APP_MEM_MB%.*} + ${CM_DB_MEM_MB%.*} + 512 ))"
+  if awk "BEGIN{exit !($need_cpu > $ncpu)}"; then
+    warn "profile needs ~${need_cpu} CPUs (app + db + tools) but Docker has ${ncpu}; limits are upper bounds, results will be pessimistic"
+  fi
+  if [ "$need_mem" -gt "$mem_mb" ] && [ "$mem_mb" -gt 0 ]; then
+    warn "profile needs ~${need_mem} MB but Docker has ${mem_mb} MB — raise Docker Desktop memory or results will be wrong"
+  fi
+}
+
+copy_scenarios() {
+  mkdir -p "$PP/scenarios"
+  local f
+  for f in "$CATCHME_HOME"/templates/k6/*.js; do
+    [ -f "$PP/scenarios/$(basename "$f")" ] || cp "$f" "$PP/scenarios/"
+  done
+}
+
+k6_run() { # <label-relative dir under runs/> <script> [config file name, default run.json]
+  local rel="$1" script="$2" cfg="${3:-run.json}"
+  compose --profile tools run --rm --no-deps -e "CATCHME_RUN=/out/$rel/$cfg" k6 run --quiet "/scripts/$script"
+}
+
+sampler() { # <dir>  — docker stats loop on the host; runs until killed
+  local dir="$1" ids
+  ids="$(compose ps -q app db 2>/dev/null | tr '\n' ' ')"
+  : >"$dir/docker_stats.jsonl"
+  while :; do
+    # shellcheck disable=SC2086
+    docker stats --no-stream --format '{{json .}}' $ids >>"$dir/docker_stats.jsonl" 2>/dev/null || true
+  done
+}
+
+activity_start() { # <dir> — pg_stat_activity every 0.25 s, looped inside the db container (short race runs too)
+  local dir="$1"
+  compose exec -T db rm -f /tmp/catchme.stop >/dev/null 2>&1 || true
+  compose exec -T -e "Q=$(cat "$SCRIPTS/sql/activity.sql")" db sh -c \
+    'while [ ! -f /tmp/catchme.stop ]; do psql -U monitor -d postgres -XAtq -c "$Q" 2>/dev/null; sleep 0.25; done' \
+    >"$dir/activity.jsonl" 2>/dev/null &
+  ACTIVITY_PID=$!
+}
+
+activity_stop() {
+  compose exec -T db touch /tmp/catchme.stop >/dev/null 2>&1 || true
+  wait "${ACTIVITY_PID:-}" 2>/dev/null || true
+}
+
+run_one() { # <label> <name>
+  local label="$1" name="$2" dir="$PP/runs/$1/$2" script invs spid
+  script="$(cat "$dir/script")"
+  invs="$(tr -d '\n' <"$dir/invariants")"
+  if [ "$name" = "_auth" ]; then
+    log "auth: logging in test users through the real login API"
+    k6_run "$label/$name" "$script" || die "auth step failed — see message above (seed password hash? auth.body? token_path?)"
+    local tf="$PP/runs/tokens.json"; [ "$label" = "quick" ] && tf="$PP/runs/quick/tokens.json"
+    if [ ! -s "$tf" ] || [ "$(tr -d ' \n' <"$tf")" = "[]" ]; then
+      die "auth step produced no tokens — is plan.yaml base_url reachable from k6 (http://app:<port>)? check: catchme logs app"
+    fi
+    return
+  fi
+  log "run $name"
+  if [ -f "$dir/warmup.json" ]; then
+    # warm-up traffic before stats are reset: JIT/caches settle, and none of it is counted
+    k6_run "$label/$name" "$script" warmup.json >/dev/null 2>&1 || warn "warm-up for $name failed (continuing)"
+  fi
+  if [ -n "$invs" ]; then py plan.py invariants-before --names "$invs" | psql_app >/dev/null; fi
+  psql_app -c "SELECT catchme.pg_stat_statements_reset();" >/dev/null
+  psql_app <"$SCRIPTS/sql/snapshot.sql" >"$dir/db_before.json"
+  local started; started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  activity_start "$dir"
+  sampler "$dir" &
+  spid=$!
+  set +e
+  k6_run "$label/$name" "$script"
+  local k6_code=$?
+  set -e
+  kill "$spid" >/dev/null 2>&1 || true
+  wait "$spid" 2>/dev/null || true
+  activity_stop
+  # lock waits ≥ deadlock_timeout (100 ms) are logged by Postgres — count them for this run
+  compose logs --no-log-prefix --since "$started" db 2>/dev/null | grep -c "still waiting for" >"$dir/lock_waits.txt" || true
+  [ "$k6_code" -eq 0 ] || warn "k6 exited with $k6_code for $name (results kept)"
+  psql_app <"$SCRIPTS/sql/snapshot.sql" >"$dir/db_after.json"
+  psql_app -c "SELECT catchme.explain_top(15);" >"$dir/explain.json" 2>/dev/null || echo '[]' >"$dir/explain.json"
+  if [ -n "$invs" ]; then
+    py plan.py invariants-check --names "$invs" | psql_app >"$dir/invariants.json"
+  fi
+  docker inspect -f '{{.Name}} {{.State.OOMKilled}} {{.RestartCount}}' $(compose ps -aq app db) >"$dir/containers.txt" 2>/dev/null || true
+}
+
+# ----------------------------------------------------------------------------- commands
+
+cmd_help() {
+  cat <<'EOF'
+catchme — Catch me if you can, before production does.
+
+Usage: catchme <command> [options]        (run from the project root)
+
+  init                     analyze the project → .prod-parity/project.json, copy k6 scenarios
+  profile [flags]          production profile → profile.yaml
+                           --scan | --from-iac [i,j] | --aws --cluster C --service S --db-id ID
+                           --app-preset ecs-fargate:0.5vcpu-1gb --db-preset rds:db.t3.micro
+                           --latency-ms 1 --p95-ms 500 --error-rate 0.01 --cpu-mode burst|baseline
+                           --list-presets
+  gen                      generate docker-compose.yml (+ baseline), toxiproxy.json, db-init
+  up [--baseline] [--with-oauth]   build and start (production limits by default)
+  status                   containers and docker stats (limits applied?)
+  logs [service]           compose logs
+  exec <service> <cmd...>  run a command in a container (e.g. compute a password hash)
+  seed [--force]           seed data from seed.yaml (skipped if unchanged)
+  load [--label L]         run plan.yaml (default label: prod) and collect metrics.json
+  baseline                 same plan without limits/latency (label: baseline), then back to prod
+  breakpoint [--label L]   ramp VUs until targets break → "holds up to N concurrent requests"
+  report [--label L] [--before L] [--lang en|ko]
+  verify <worktree> [--lang en|ko]  re-run with code from a git worktree (label: after) + before/after report
+  quick                    hook mode: 1 VU × 20 per quick run, exit 2 on queries/request regression
+  hooks on|off             opt in/out of the PostToolUse quick check
+  mint-tokens --secret-env NAME [--count 50] [--claims JSON]   test JWTs (auth mode: token)
+  all [--lang en|ko]       init(if needed) → gen → up → seed → load → report
+  teardown                 remove containers, volumes, app image (keeps reports, runs, inputs)
+EOF
+}
+
+cmd_init() {
+  mkdir -p "$PP/state" "$PP/runs" "$PP/reports"
+  py detect.py "$@"
+  copy_scenarios
+  local f
+  for f in seed plan invariants; do
+    [ -f "$PP/$f.yaml" ] || [ -f "$PP/$f.example.yaml" ] || cp "$CATCHME_HOME/templates/config/$f.example.yaml" "$PP/$f.example.yaml"
+  done
+  log "next: catchme profile ...   (examples for seed/plan/invariants are in .prod-parity/*.example.yaml)"
+}
+
+cmd_profile() { py profile.py "$@"; }
+
+cmd_gen() {
+  [ -f "$PP/project.json" ] || die "run: catchme init"
+  [ -f "$PP/profile.yaml" ] || die "run: catchme profile ..."
+  copy_scenarios
+  py gen_compose.py "$@"
+}
+
+cmd_up() {
+  need_docker
+  local mode=prod oauth=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --baseline) mode=baseline ;;
+      --with-oauth) oauth="--profile oauth" ;;
+      *) die "unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -f "$PP/env.$mode.sh" ] || cmd_gen
+  mkdir -p "$PP/state"
+  local prev; prev="$(current_mode)"
+  echo "$mode" >"$PP/state/mode"
+  load_env "$mode"
+  check_docker_capacity
+  log "starting ($mode) — project $(project_name)"
+  if [ "$prev" != "$mode" ]; then
+    # switch limits: recreate containers, keep the seeded volume
+    CM_COMPOSE_FILE=$( . "$PP/env.$prev.sh" 2>/dev/null; echo "${CM_COMPOSE_FILE:-docker-compose.yml}" ) \
+      compose down --remove-orphans >/dev/null 2>&1 || true
+  fi
+  # shellcheck disable=SC2086
+  log "building and starting containers (output: .prod-parity/state/up.log, CATCHME_VERBOSE=1 to stream it)"
+  if [ "${CATCHME_VERBOSE:-0}" = "1" ]; then
+    compose $oauth up -d --build --remove-orphans db toxiproxy app $( [ -n "$oauth" ] && echo mock-oauth2 ) \
+      || die "docker compose up failed"
+  elif ! compose --progress plain $oauth up -d --build --remove-orphans db toxiproxy app \
+         $( [ -n "$oauth" ] && echo mock-oauth2 ) >"$PP/state/up.log" 2>&1; then
+    tail -n 40 "$PP/state/up.log" >&2
+    die "docker compose up failed — full log: .prod-parity/state/up.log"
+  fi
+  wait_db
+  apply_toxics
+  wait_app
+}
+
+cmd_down() { load_env; compose --profile tools --profile oauth down --remove-orphans; }
+
+cmd_status() {
+  load_env
+  compose ps
+  local ids; ids="$(compose ps -q 2>/dev/null | tr '\n' ' ')"
+  [ -n "$ids" ] || return 0
+  # shellcheck disable=SC2086
+  docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' $ids
+  # shellcheck disable=SC2086
+  docker inspect -f '{{.Name}}  cpus={{.HostConfig.NanoCpus}}  mem_limit={{.HostConfig.Memory}}' $ids |
+    awk '{ split($2,a,"="); split($3,b,"="); printf "%s  cpus=%s  mem_limit=%s\n", $1, (a[2]>0? a[2]/1e9 : "none"), (b[2]>0? b[2]/1048576 "MB" : "none") }'
+}
+
+cmd_logs() { load_env; compose logs --tail 200 "$@"; }
+
+cmd_exec() { load_env; [ $# -ge 2 ] || die "usage: catchme exec <service> <cmd...>"; compose exec -T "$@"; }
+
+cmd_seed() {
+  need_docker; load_env
+  is_up || die "environment is not up — run: catchme up"
+  [ -f "$PP/seed.yaml" ] || die "write .prod-parity/seed.yaml first (see seed.example.yaml)"
+  local force=0; [ "${1:-}" = "--force" ] && force=1
+  mkdir -p "$PP/state"
+  py seed.py schema-sql | psql_app >"$PP/state/schema.json"
+  py seed.py plan --schema .prod-parity/state/schema.json --digest-out .prod-parity/state/seed.digest >"$PP/state/seed.sql"
+  local want have
+  want="$(tr -d '\n' <"$PP/state/seed.digest")"
+  have="$(psql_app -c "SELECT value FROM catchme.meta WHERE key = 'seed_sha'" 2>/dev/null || true)"
+  if [ "$force" -eq 0 ] && [ "$want" = "$have" ]; then
+    log "seed unchanged ($want) — skipping (use --force to reseed)"
+  else
+    log "seeding (this can take a few minutes for millions of rows)"
+    local t0; t0="$(date +%s)"
+    compose exec -T db psql -U monitor -d app -X -q -v ON_ERROR_STOP=1 <"$PP/state/seed.sql" >&2
+    log "seeded in $(( $(date +%s) - t0 ))s"
+  fi
+  local ex; ex="$(py seed.py exports-sql)"
+  if [ -n "$ex" ]; then
+    printf '%s' "$ex" | psql_app >"$PP/runs/exports.json"
+    log "ownership exports → .prod-parity/runs/exports.json"
+  else
+    rm -f "$PP/runs/exports.json"
+  fi
+}
+
+cmd_load() {
+  need_docker; load_env
+  local label=prod
+  [ "${1:-}" = "--label" ] && { label="$2"; shift 2; }
+  is_up || die "environment is not up — run: catchme up"
+  [ -f "$PP/plan.yaml" ] || die "write .prod-parity/plan.yaml first (see plan.example.yaml)"
+  copy_scenarios
+  mkdir -p "$PP/runs/$label"
+  local names name
+  names="$(py plan.py prepare --label "$label")"
+  for name in $names; do run_one "$label" "$name"; done
+  py collect.py finalize --label "$label"
+}
+
+cmd_baseline() {
+  log "local baseline: same data and plan, no resource limits, no latency"
+  cmd_up --baseline
+  cmd_load --label baseline
+  cmd_up
+}
+
+cmd_breakpoint() {
+  need_docker; load_env
+  local label=prod stage
+  [ "${1:-}" = "--label" ] && label="$2"
+  is_up || die "environment is not up — run: catchme up"
+  [ -f "$PP/runs/tokens.json" ] || ! grep -q 'mode: *login' "$PP/plan.yaml" 2>/dev/null || {
+    log "no tokens yet — running the auth step"
+    py plan.py prepare --label _bp_auth >/dev/null
+    run_one _bp_auth _auth
+  }
+  py breakpoint.py reset --label "$label"
+  while :; do
+    stage="$(py breakpoint.py next --label "$label")"
+    [ "$stage" = "done" ] && break
+    k6_run "$label/breakpoint/$stage" read.js || true
+    py breakpoint.py judge --label "$label"
+  done
+}
+
+cmd_report() { py report.py "$@"; }
+
+cmd_verify() {
+  [ $# -ge 1 ] || die "usage: catchme verify <git-worktree-path> [--lang en|ko]"
+  local wt="$1"; shift
+  [ -d "$wt" ] || die "$wt is not a directory"
+  wt="$(cd "$wt" && pwd)"
+  [ "$wt" != "$PROJECT_ROOT" ] || die "verify needs a separate git worktree, not the original checkout"
+  if git -C "$PROJECT_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "$PROJECT_ROOT" worktree list --porcelain | grep -q "^worktree $wt\$" \
+      || warn "$wt is not listed in 'git worktree list' — make sure the fix lives on its own branch"
+  fi
+  [ -f "$PP/runs/prod/metrics.json" ] || die "no 'prod' run to compare against — run: catchme load"
+  log "rebuilding app from $wt (same profile, seed and plan)"
+  py gen_compose.py --context "$wt"
+  cmd_up
+  # always reseed: write/race runs of the "before" measurement changed stock, orders, ...
+  cmd_seed --force
+  cmd_load --label after
+  py report.py --label after --before prod "$@"
+  log "restoring the original app (so later runs don't measure the fixed build)"
+  py gen_compose.py
+  cmd_up
+}
+
+cmd_quick() {
+  [ -f "$PP/plan.yaml" ] || { log "no plan.yaml — skipping quick check"; return 0; }
+  need_docker; load_env
+  if ! is_up; then log "environment not up — skipping quick check (run /catchme first)"; return 0; fi
+  [ -f "$PP/query-baseline.json" ] || { log "no full run yet — skipping quick check"; return 0; }
+  log "quick check: rebuilding app"
+  mkdir -p "$PP/state"
+  compose --progress plain up -d --build --no-deps app >"$PP/state/up.log" 2>&1 \
+    || { tail -n 40 "$PP/state/up.log" >&2; die "app rebuild failed — full log: .prod-parity/state/up.log"; }
+  wait_app
+  local names name
+  names="$(py plan.py prepare --label quick --quick)"
+  for name in $names; do run_one quick "$name"; done
+  py collect.py finalize --label quick
+  set +e
+  py collect.py quick-judge
+  local code=$?
+  set -e
+  return "$code"
+}
+
+cmd_hooks() {
+  mkdir -p "$PP"
+  case "${1:-}" in
+    on)  [ -f "$PP/hooks.enabled" ] || printf '# catchme hooks opt-in. Extra glob patterns (one per line) for query-related files:\n' >"$PP/hooks.enabled"
+         log "hooks enabled — quick check runs after edits to query-related files" ;;
+    off) rm -f "$PP/hooks.enabled"; log "hooks disabled" ;;
+    *)   die "usage: catchme hooks on|off" ;;
+  esac
+}
+
+cmd_mint_tokens() { py plan.py mint-tokens "$@"; }
+
+cmd_all() {
+  [ -f "$PP/project.json" ] || cmd_init
+  cmd_gen
+  cmd_up
+  cmd_seed
+  cmd_load
+  cmd_report "$@"
+}
+
+cmd_teardown() {
+  need_docker
+  local f n
+  for f in docker-compose.yml docker-compose.baseline.yml; do
+    [ -f "$PP/$f" ] || continue
+    CM_COMPOSE_FILE="$f" compose --profile tools --profile oauth down -v --rmi local --remove-orphans >/dev/null 2>&1 || true
+  done
+  rm -rf "$PP/state"
+  n="$(docker ps -aq --filter "label=com.docker.compose.project=$(project_name)" | wc -l | tr -d ' ')"
+  if [ "$n" = "0" ]; then
+    log "teardown complete — 0 containers left; reports, runs and input files kept in .prod-parity/"
+  else
+    warn "$n containers still present for $(project_name)"
+    exit 1
+  fi
+}
+
+# ----------------------------------------------------------------------------- dispatch
+
+cmd="${1:-help}"; [ $# -gt 0 ] && shift
+case "$cmd" in
+  help|-h|--help) cmd_help ;;
+  init) cmd_init "$@" ;;
+  profile) cmd_profile "$@" ;;
+  gen) cmd_gen "$@" ;;
+  up) cmd_up "$@" ;;
+  down) cmd_down ;;
+  status) cmd_status ;;
+  logs) cmd_logs "$@" ;;
+  exec) cmd_exec "$@" ;;
+  seed) cmd_seed "$@" ;;
+  load) cmd_load "$@" ;;
+  baseline) cmd_baseline ;;
+  breakpoint) cmd_breakpoint "$@" ;;
+  report) cmd_report "$@" ;;
+  verify) cmd_verify "$@" ;;
+  quick) cmd_quick ;;
+  hooks) cmd_hooks "$@" ;;
+  mint-tokens) cmd_mint_tokens "$@" ;;
+  all) cmd_all "$@" ;;
+  teardown) cmd_teardown ;;
+  *) die "unknown command: $cmd (catchme help)" ;;
+esac

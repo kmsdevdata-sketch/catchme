@@ -1,0 +1,29 @@
+# catchme seed config → .prod-parity/seed.yaml
+# Same seed + same schema → same data.
+seed: 42
+
+# Target row counts. Table names exactly as in the DB (Prisma: "Order", Django: app_order, JPA: orders).
+# Tables referenced by foreign keys but not listed get 100 rows.
+tables:
+  users: 10000
+  products: 2000
+  orders: 1000000
+  order_items: 3000000
+
+# SQL expressions per column. `i` is the row number (1..rows). Anything not listed is generated
+# from the column type; FK columns point at existing parent rows (uniform distribution).
+overrides:
+  users:
+    email: "'user' || i || '@catchme.test'"
+    password_hash: "'<hash of catchme-test computed with the app algorithm>'"
+    role: "CASE WHEN i <= 5 THEN 'ADMIN' ELSE 'USER' END"
+  products:
+    stock: "100000"
+    price: "1000 + (i % 50) * 100"
+  orders:
+    status: "(ARRAY['PAID','SHIPPED','CANCELLED'])[1 + (i % 3)]"
+
+# Ownership maps for k6 `{own:<name>}` placeholders. Columns: owner, id.
+exports:
+  orders_by_user: |
+    SELECT user_id AS owner, id FROM orders WHERE user_id <= 50 ORDER BY id

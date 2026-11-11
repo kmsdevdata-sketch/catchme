@@ -1,0 +1,24 @@
+# demo-shop seed — every test user's password is "catchme-test".
+# password_hash is computed inside the app container with the app's own algorithm (see references/auth.md).
+seed: 42
+
+tables:
+  users: 1000
+  products: 1000
+  orders: 1000000
+  order_items: 2000000
+
+overrides:
+  users:
+    email: "'user' || i || '@catchme.test'"
+    name: "'Test User ' || i"
+    password_hash: "'$2b$10$H49G3g0L2YceKuJR1CePKO2IceUff9QuTKKsUBB8KFAnJzF1ZqnF2'"
+  products:
+    name: "'Product ' || i"
+    price: "1000 + (i % 50) * 100"
+    stock: "CASE WHEN i = 2 THEN 10 ELSE 100000 END"  # product 2: oversell test
+  orders:
+    status: "(ARRAY['PAID','SHIPPED','CANCELLED'])[1 + (i % 3)]"
+  order_items:
+    quantity: "1 + (i % 3)"
+    unit_price: "1000 + (i % 50) * 100"

@@ -1,0 +1,17 @@
+# AWS EC2 instance types for the app tier.
+# baseline_cpu_pct: burstable (T-class) baseline per vCPU; used when cpu_mode=baseline.
+kind: app
+provider: ec2
+sizes:
+  t3.micro: {cpus: 2, memory_mb: 1024, baseline_cpu_pct: 10}
+  t3.small: {cpus: 2, memory_mb: 2048, baseline_cpu_pct: 20}
+  t3.medium: {cpus: 2, memory_mb: 4096, baseline_cpu_pct: 20}
+  t3.large: {cpus: 2, memory_mb: 8192, baseline_cpu_pct: 30}
+  t4g.micro: {cpus: 2, memory_mb: 1024, baseline_cpu_pct: 10}
+  t4g.small: {cpus: 2, memory_mb: 2048, baseline_cpu_pct: 20}
+  t4g.medium: {cpus: 2, memory_mb: 4096, baseline_cpu_pct: 20}
+  c5.large: {cpus: 2, memory_mb: 4096}
+  m5.large: {cpus: 2, memory_mb: 8192}
+  m6i.large: {cpus: 2, memory_mb: 8192}
+  m6g.large: {cpus: 2, memory_mb: 8192}
+  m5.xlarge: {cpus: 4, memory_mb: 16384}

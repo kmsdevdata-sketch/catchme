@@ -1,0 +1,16 @@
+.DS_Store
+__pycache__/
+node_modules/
+examples/*/.prod-parity/runs/
+examples/*/.prod-parity/state/
+examples/*/.prod-parity/reports/
+examples/*/.prod-parity/project.json
+examples/*/.prod-parity/profile.yaml
+examples/*/.prod-parity/scenarios/
+examples/*/.prod-parity/db-init/
+examples/*/.prod-parity/docker-compose*.yml
+examples/*/.prod-parity/toxiproxy.json
+examples/*/.prod-parity/env.*.sh
+examples/*/.prod-parity/*.example.yaml
+examples/*/.prod-parity/query-baseline.json
+examples/*/.prod-parity/hooks.enabled

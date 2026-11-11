@@ -1,0 +1,16 @@
+{
+  "name": "catchme",
+  "owner": {
+    "name": "catchme contributors"
+  },
+  "metadata": {
+    "description": "catchme — production-parity performance and concurrency testing for coding agents."
+  },
+  "plugins": [
+    {
+      "name": "catchme",
+      "source": "./",
+      "description": "Reproduce production specs in local Docker and catch N+1, pool exhaustion, lock contention, missing indexes and race conditions before production does."
+    }
+  ]
+}

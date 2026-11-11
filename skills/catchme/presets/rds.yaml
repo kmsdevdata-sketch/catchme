@@ -1,0 +1,21 @@
+# AWS RDS for PostgreSQL instance classes.
+# max_connections is derived like the RDS default LEAST(DBInstanceClassMemory/9531392, 5000),
+# with DBInstanceClassMemory approximated as 90% of instance memory. Override in profile.yaml
+# if your parameter group sets it explicitly.
+# shared_buffers defaults to ~25% of memory on RDS.
+kind: db
+provider: rds-postgres
+classes:
+  db.t3.micro: {cpus: 2, memory_mb: 1024, baseline_cpu_pct: 10}
+  db.t3.small: {cpus: 2, memory_mb: 2048, baseline_cpu_pct: 20}
+  db.t3.medium: {cpus: 2, memory_mb: 4096, baseline_cpu_pct: 20}
+  db.t3.large: {cpus: 2, memory_mb: 8192, baseline_cpu_pct: 30}
+  db.t4g.micro: {cpus: 2, memory_mb: 1024, baseline_cpu_pct: 10}
+  db.t4g.small: {cpus: 2, memory_mb: 2048, baseline_cpu_pct: 20}
+  db.t4g.medium: {cpus: 2, memory_mb: 4096, baseline_cpu_pct: 20}
+  db.m5.large: {cpus: 2, memory_mb: 8192}
+  db.m6g.large: {cpus: 2, memory_mb: 8192}
+  db.m6i.large: {cpus: 2, memory_mb: 8192}
+  db.m5.xlarge: {cpus: 4, memory_mb: 16384}
+  db.r5.large: {cpus: 2, memory_mb: 16384}
+  db.r6g.large: {cpus: 2, memory_mb: 16384}

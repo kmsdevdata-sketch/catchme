@@ -1,0 +1,18 @@
+{
+  "name": "catchme",
+  "version": "0.1.0",
+  "description": "Catch me if you can — before production does. Reproduce production specs (CPU, memory, DB class, network latency, data volume) in local Docker and let the agent find performance and concurrency bugs local tests miss.",
+  "author": {
+    "name": "catchme contributors"
+  },
+  "license": "MIT",
+  "keywords": [
+    "performance",
+    "load-testing",
+    "n+1",
+    "race-condition",
+    "docker",
+    "k6",
+    "toxiproxy"
+  ]
+}
