@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 430" width="1280" height="430" role="img" aria-labelledby="t d">
+  <title id="t">How catchme works</title>
+  <desc id="d">Your repo and production specs go in. catchme builds a production-like environment in local Docker: k6 sends load and races to the app, which reaches Postgres through Toxiproxy with added latency. Measurements become a report; fixes are made on a branch and re-measured with the same seed and scenarios.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0A0F1F"/>
+      <stop offset="1" stop-color="#151C3A"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#1E2850" stroke-width="1"/>
+    </pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#5C6BB0"/>
+    </marker>
+    <marker id="arrowc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#E5794E"/>
+    </marker>
+    <clipPath id="frame"><rect width="1280" height="430" rx="24"/></clipPath>
+  </defs>
+  <style>
+    .sans { font-family: ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .h    { font-size: 17px; font-weight: 700; fill: #F5F2EA; }
+    .s    { font-size: 13px; fill: #8E9BD6; }
+    .xs   { font-size: 12px; fill: #6C79B8; }
+    .card { fill: #121936; stroke: #2A3566; stroke-width: 1.5; }
+    .node { fill: #18204A; stroke: #34418A; stroke-width: 1.5; }
+    .flow { fill: none; stroke: #5C6BB0; stroke-width: 2.5; stroke-dasharray: 7 7; animation: flow 1s linear infinite; }
+    .loop { fill: none; stroke: #E5794E; stroke-width: 2.5; stroke-dasharray: 7 7; animation: flow 1s linear infinite; }
+    .tap  { fill: none; stroke: #3B4A86; stroke-width: 1.5; stroke-dasharray: 2 5; }
+    @keyframes flow { to { stroke-dashoffset: -28 } }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+  </style>
+
+  <g clip-path="url(#frame)">
+    <rect width="1280" height="430" fill="url(#bg)"/>
+    <rect width="1280" height="430" fill="url(#grid)" opacity="0.45"/>
+
+    <!-- 1. input -->
+    <rect class="card" x="36" y="70" width="210" height="196" rx="16"/>
+    <text x="58" y="104" class="sans h">Your repo</text>
+    <text x="58" y="132" class="sans s">code + Dockerfile</text>
+    <text x="58" y="154" class="sans s">any language / framework</text>
+    <line x1="58" y1="172" x2="224" y2="172" stroke="#2A3566"/>
+    <text x="58" y="198" class="sans h" font-size="15">Production specs</text>
+    <text x="58" y="222" class="mono xs" font-size="11" style="font-size:11px">Terraform · CDK · ECS · k8s</text>
+    <text x="58" y="242" class="mono xs" font-size="11" style="font-size:11px">AWS read-only · presets</text>
+
+    <path class="flow" d="M250 168 H294" marker-end="url(#arrow)"/>
+
+    <!-- 2. local docker, production profile -->
+    <rect x="300" y="40" width="690" height="270" rx="20" fill="#0E1430" stroke="#E5794E" stroke-opacity="0.55" stroke-width="1.5" stroke-dasharray="6 6"/>
+    <text x="324" y="70" class="sans h" fill="#E5794E" style="fill:#E5794E">local Docker · production profile</text>
+    <text x="966" y="70" class="mono xs" text-anchor="end">.prod-parity/</text>
+
+    <g transform="translate(326 104)">
+      <rect class="node" width="132" height="92" rx="14"/>
+      <text x="66" y="36" class="sans h" text-anchor="middle">k6</text>
+      <text x="66" y="58" class="sans s" text-anchor="middle">steady load</text>
+      <text x="66" y="76" class="sans s" text-anchor="middle">100 at once</text>
+    </g>
+    <path class="flow" d="M462 150 H496" marker-end="url(#arrow)"/>
+    <g transform="translate(500 104)">
+      <rect class="node" width="140" height="92" rx="14" stroke="#E5794E" style="stroke:#E5794E"/>
+      <text x="70" y="36" class="sans h" text-anchor="middle">your app</text>
+      <text x="70" y="58" class="mono s" text-anchor="middle">0.5 vCPU · 1 GB</text>
+      <text x="70" y="76" class="sans s" text-anchor="middle">test login</text>
+    </g>
+    <path class="flow" d="M644 150 H678" marker-end="url(#arrow)"/>
+    <g transform="translate(682 104)">
+      <rect class="node" width="120" height="92" rx="14"/>
+      <text x="60" y="36" class="sans h" text-anchor="middle">Toxiproxy</text>
+      <text x="60" y="58" class="mono s" text-anchor="middle">+1 ms</text>
+      <text x="60" y="76" class="sans s" text-anchor="middle">per round trip</text>
+    </g>
+    <path class="flow" d="M806 150 H840" marker-end="url(#arrow)"/>
+    <g transform="translate(844 104)">
+      <rect class="node" width="124" height="92" rx="14"/>
+      <text x="62" y="36" class="sans h" text-anchor="middle">Postgres</text>
+      <text x="62" y="58" class="mono s" text-anchor="middle">db.t3.micro</text>
+      <text x="62" y="76" class="mono s" text-anchor="middle">3M seeded rows</text>
+    </g>
+
+    <!-- measurement taps -->
+    <path class="tap" d="M570 200 V238"/>
+    <path class="tap" d="M906 200 V238"/>
+    <path class="tap" d="M392 200 V238"/>
+    <rect x="326" y="240" width="642" height="46" rx="12" fill="#151D42" stroke="#2A3566"/>
+    <text x="647" y="268" class="mono xs" text-anchor="middle" style="fill:#9AA6DE">p95 · queries/req · EXPLAIN · lock waits · connections · CPU/mem · invariants</text>
+
+    <path class="flow" d="M994 168 H1028" marker-end="url(#arrow)"/>
+
+    <!-- 3. report -->
+    <rect class="card" x="1034" y="70" width="210" height="196" rx="16"/>
+    <text x="1056" y="104" class="sans h">report.md</text>
+    <g class="sans s">
+      <circle cx="1062" cy="130" r="5" fill="#FF5F5F"/><text x="1076" y="135">race: 100 sold, stock −10</text>
+      <circle cx="1062" cy="156" r="5" fill="#FF9F43"/><text x="1076" y="161">N+1: 62 queries/req</text>
+      <circle cx="1062" cy="182" r="5" fill="#FF9F43"/><text x="1076" y="187">Seq Scan on orders</text>
+      <circle cx="1062" cy="208" r="5" fill="#FFD25F"/><text x="1076" y="213">CPU at 0.5 vCPU limit</text>
+    </g>
+    <text x="1056" y="246" class="mono xs">+ code locations, fixes</text>
+
+    <!-- 4. fix and re-measure loop -->
+    <path class="loop" d="M1139 270 V368 Q1139 384 1123 384 H586 Q570 384 570 368 V318" marker-end="url(#arrowc)"/>
+    <rect x="690" y="364" width="320" height="40" rx="20" fill="#2A1A14" stroke="#E5794E" stroke-opacity="0.7"/>
+    <text x="850" y="389" class="sans" font-size="14" fill="#F5C2AA" text-anchor="middle">fix on a branch → verify, same seed &amp; scenarios</text>
+    <text x="554" y="350" class="mono xs" text-anchor="end" style="fill:#F5C2AA">after: queries/req 62 → 2</text>
+    <text x="554" y="368" class="mono xs" text-anchor="end" style="fill:#F5C2AA">p95 −90% · races fixed</text>
+  </g>
+  <rect x="0.5" y="0.5" width="1279" height="429" rx="23.5" fill="none" stroke="#26305C"/>
+</svg>

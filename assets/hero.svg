@@ -1,0 +1,173 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 440" width="1280" height="440" role="img" aria-labelledby="t d">
+  <title id="t">catchme — Catch me if you can, before production does</title>
+  <desc id="d">An agent with a net runs after four fleeing creatures: a race condition, an N+1 query chain, a lock wait and a p95 latency spike.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0A0F1F"/>
+      <stop offset="1" stop-color="#151C3A"/>
+    </linearGradient>
+    <radialGradient id="body" cx="0.38" cy="0.32" r="0.8">
+      <stop offset="0" stop-color="#F7B18D"/>
+      <stop offset="0.55" stop-color="#E5794E"/>
+      <stop offset="1" stop-color="#B9532F"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#E5794E" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#E5794E" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="vignette" cx="0.5" cy="0.45" r="0.75">
+      <stop offset="0.6" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0.45"/>
+    </radialGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#1E2850" stroke-width="1"/>
+    </pattern>
+    <pattern id="mesh" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
+      <path d="M0 0H9M0 0V9" stroke="#F5F2EA" stroke-width="1.2"/>
+    </pattern>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3"/>
+    </filter>
+    <clipPath id="frame"><rect width="1280" height="440" rx="24"/></clipPath>
+  </defs>
+
+  <style>
+    .sans { font-family: ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .label { font-size: 14px; fill: #8E9BD6; letter-spacing: 0.5px; }
+    .bob   { animation: bob 2.4s ease-in-out infinite; }
+    .bob2  { animation: bob 2.0s ease-in-out infinite -0.7s; }
+    .bob3  { animation: bob 2.8s ease-in-out infinite -1.3s; }
+    .bob4  { animation: bob 2.2s ease-in-out infinite -0.3s; }
+    .run   { animation: run 0.5s ease-in-out infinite; }
+    .legA, .legB { transform-box: fill-box; transform-origin: 50% 0%; }
+    .legA  { animation: legA 0.5s ease-in-out infinite; }
+    .legB  { animation: legB 0.5s ease-in-out infinite; }
+    .speed { stroke-dasharray: 28 18; animation: speed 0.6s linear infinite; }
+    .burst { transform-box: fill-box; transform-origin: 50% 50%; animation: pulse 0.9s ease-in-out infinite; }
+    .wobble{ transform-box: fill-box; transform-origin: 50% 0%; animation: wobble 1.1s ease-in-out infinite; }
+    .chain circle { animation: wiggle 1.2s ease-in-out infinite; }
+    .chain circle:nth-child(2) { animation-delay: -0.15s; }
+    .chain circle:nth-child(3) { animation-delay: -0.30s; }
+    .chain circle:nth-child(4) { animation-delay: -0.45s; }
+    .chain circle:nth-child(5) { animation-delay: -0.60s; }
+    .chain circle:nth-child(6) { animation-delay: -0.75s; }
+    .chain circle:nth-child(7) { animation-delay: -0.90s; }
+    .spike { stroke-dasharray: 220; animation: flicker 1.6s ease-in-out infinite; }
+    .chart { stroke-dasharray: 6 10; animation: speed 3s linear infinite; }
+    @keyframes bob    { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-8px) } }
+    @keyframes run    { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-5px) } }
+    @keyframes legA   { 0%,100% { transform: rotate(32deg) } 50% { transform: rotate(-28deg) } }
+    @keyframes legB   { 0%,100% { transform: rotate(-28deg) } 50% { transform: rotate(32deg) } }
+    @keyframes speed  { to { stroke-dashoffset: -46 } }
+    @keyframes pulse  { 0%,100% { transform: scale(0.8); opacity: 0.75 } 50% { transform: scale(1.25); opacity: 1 } }
+    @keyframes wobble { 0%,100% { transform: rotate(-9deg) } 50% { transform: rotate(9deg) } }
+    @keyframes wiggle { 0%,100% { transform: translateY(-5px) } 50% { transform: translateY(5px) } }
+    @keyframes flicker{ 0%,100% { stroke-dashoffset: 0; opacity: 1 } 45% { opacity: 0.55 } 50% { stroke-dashoffset: 30 } }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+  </style>
+
+  <g clip-path="url(#frame)">
+    <rect width="1280" height="440" fill="url(#bg)"/>
+    <rect width="1280" height="440" fill="url(#grid)" opacity="0.55"/>
+
+    <!-- latency chart in the background -->
+    <polyline class="chart" fill="none" stroke="#2C3A72" stroke-width="2.5" stroke-linejoin="round"
+      points="0,402 70,398 130,404 190,396 250,400 310,392 370,398 430,388 490,394 540,380 590,390 640,372 690,384 730,350 770,378 810,318 850,366 890,330 930,360 970,286 1010,346 1050,300 1090,340 1130,250 1170,330 1210,292 1280,310"/>
+
+    <!-- wordmark -->
+    <text x="72" y="120" class="sans" font-size="78" font-weight="800" fill="#F5F2EA" letter-spacing="-2">catch<tspan fill="#E5794E">me</tspan></text>
+    <text x="76" y="162" class="sans" font-size="23" fill="#B4BCE3">Catch me if you can — before production does.</text>
+    <text x="77" y="196" class="mono" font-size="14" fill="#6C79B8">N+1 · pool exhaustion · lock waits · missing indexes · races</text>
+
+    <!-- dotted chase path -->
+    <path d="M360 262 C 480 200, 560 330, 700 236 S 930 300, 1040 190 S 1150 320, 1210 300" fill="none"
+      stroke="#E5794E" stroke-width="2" stroke-dasharray="2 10" stroke-linecap="round" opacity="0.35"/>
+
+    <!-- the chaser: an agent with a net -->
+    <g transform="translate(250 330)">
+      <circle r="92" fill="url(#glow)"/>
+      <g stroke="#E5794E" stroke-width="5" stroke-linecap="round" opacity="0.55">
+        <line class="speed" x1="-190" y1="-34" x2="-70" y2="-34"/>
+        <line class="speed" x1="-210" y1="0" x2="-78" y2="0" style="animation-delay:-0.2s"/>
+        <line class="speed" x1="-180" y1="34" x2="-66" y2="34" style="animation-delay:-0.4s"/>
+      </g>
+      <g class="run">
+        <line class="legA" x1="-8" y1="26" x2="-8" y2="66" stroke="#B9532F" stroke-width="10" stroke-linecap="round"/>
+        <line class="legB" x1="12" y1="26" x2="12" y2="66" stroke="#C9603A" stroke-width="10" stroke-linecap="round"/>
+        <ellipse rx="34" ry="40" fill="url(#body)" transform="rotate(-18)"/>
+        <!-- eye, looking ahead -->
+        <ellipse cx="13" cy="-14" rx="8" ry="9" fill="#FFF8F0"/>
+        <circle cx="17" cy="-13" r="4" fill="#1A1430"/>
+        <!-- arm and net -->
+        <line x1="22" y1="-2" x2="74" y2="-30" stroke="#C9603A" stroke-width="8" stroke-linecap="round"/>
+        <line x1="70" y1="-28" x2="118" y2="-52" stroke="#F5F2EA" stroke-width="4" stroke-linecap="round"/>
+        <g transform="translate(150 -64) rotate(-16)">
+          <!-- the net's bag, trailing behind the hoop -->
+          <path d="M-32 0 C-40 34 -14 62 10 58 C 26 54 34 30 32 0 Z" fill="url(#mesh)" opacity="0.45"/>
+          <path d="M-32 0 C-40 34 -14 62 10 58 C 26 54 34 30 32 0" fill="none" stroke="#F5F2EA" stroke-width="1.5" opacity="0.6"/>
+          <ellipse rx="32" ry="13" fill="none" stroke="#F5F2EA" stroke-width="4"/>
+        </g>
+      </g>
+    </g>
+
+    <!-- race condition: two threads colliding -->
+    <g transform="translate(720 226)">
+      <g class="bob">
+        <g opacity="0.22" transform="translate(-26 0)">
+          <path d="M-64 26 C-26 -56 26 56 64 -26" fill="none" stroke="#5BE7FF" stroke-width="5" stroke-linecap="round"/>
+          <path d="M-64 -26 C-26 56 26 -56 64 26" fill="none" stroke="#FF5FA8" stroke-width="5" stroke-linecap="round"/>
+        </g>
+        <path d="M-64 26 C-26 -56 26 56 64 -26" fill="none" stroke="#5BE7FF" stroke-width="5" stroke-linecap="round"/>
+        <path d="M-64 -26 C-26 56 26 -56 64 26" fill="none" stroke="#FF5FA8" stroke-width="5" stroke-linecap="round"/>
+        <polygon class="burst" points="0,-16 4,-5 15,-6 7,2 11,13 0,7 -11,13 -7,2 -15,-6 -4,-5" fill="#FFE27A"/>
+        <text y="64" class="mono label" text-anchor="middle">race condition</text>
+      </g>
+    </g>
+
+    <!-- N+1: a chain that keeps growing -->
+    <g transform="translate(930 322)">
+      <g class="bob2">
+        <g class="chain" fill="#9B7BFF">
+          <circle cx="0" cy="0" r="17"/>
+          <circle cx="-31" cy="0" r="12" opacity="0.85"/>
+          <circle cx="-55" cy="0" r="10" opacity="0.7"/>
+          <circle cx="-75" cy="0" r="8" opacity="0.55"/>
+          <circle cx="-91" cy="0" r="6" opacity="0.42"/>
+          <circle cx="-104" cy="0" r="5" opacity="0.3"/>
+          <circle cx="-115" cy="0" r="4" opacity="0.2"/>
+        </g>
+        <circle cx="6" cy="-5" r="4.5" fill="#FFF8F0"/>
+        <circle cx="7.5" cy="-4.5" r="2.2" fill="#1A1430"/>
+        <text x="-40" y="50" class="mono label" text-anchor="middle">N+1 · 62 queries/req</text>
+      </g>
+    </g>
+
+    <!-- lock wait: a padlock that won't sit still -->
+    <g transform="translate(1062 150)">
+      <g class="bob3">
+        <g class="wobble">
+          <path d="M-15 -4 V-17 A15 15 0 0 1 15 -17 V-4" fill="none" stroke="#FFB35C" stroke-width="6" stroke-linecap="round"/>
+          <rect x="-24" y="-6" width="48" height="38" rx="9" fill="#FFB35C"/>
+          <circle cx="0" cy="9" r="5" fill="#2A1B0C"/>
+          <rect x="-2" y="10" width="4" height="10" rx="2" fill="#2A1B0C"/>
+        </g>
+        <text y="56" class="mono label" text-anchor="middle">lock wait</text>
+      </g>
+    </g>
+
+    <!-- p95 spike: a latency ghost -->
+    <g transform="translate(1168 274)">
+      <g class="bob4">
+        <path d="M-44 0 C-44 -30 -24 -48 0 -48 C24 -48 44 -30 44 0 V26 L32 18 L20 28 L8 18 L-4 28 L-16 18 L-28 28 L-44 18 Z"
+          fill="#FF6B6B" opacity="0.18"/>
+        <path class="spike" d="M-38 8 H-24 L-15 -34 L-5 22 L5 -14 L14 8 H38" fill="none" stroke="#FF6B6B" stroke-width="5"
+          stroke-linecap="round" stroke-linejoin="round"/>
+        <text y="56" class="mono label" text-anchor="middle">p95 spike</text>
+      </g>
+    </g>
+
+    <rect width="1280" height="440" fill="url(#vignette)"/>
+  </g>
+  <rect x="0.5" y="0.5" width="1279" height="439" rx="23.5" fill="none" stroke="#26305C"/>
+</svg>

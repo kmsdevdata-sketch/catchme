@@ -1,48 +1,75 @@
-# catchme
+<p align="center">
+  <img src="assets/hero.svg" alt="catchme — an agent with a net chasing a race condition, an N+1 query, a lock wait and a p95 spike" width="100%">
+</p>
 
-**Catch me if you can — before production does.**
+<p align="center">
+  <b>Production-parity load &amp; race testing, run by your coding agent.</b><br>
+  Your laptop has 50 rows, no CPU limit and zero latency. Production doesn't.
+</p>
 
-Your laptop has 50 rows, no CPU limit and zero network latency. Production has a million rows,
-0.5 vCPU, a `db.t3.micro` and 1 ms per round trip. That's why N+1 queries, pool exhaustion,
-lock contention, missing indexes and races show up only in production.
+<p align="center">
+  <a href="https://github.com/kmsdevdata-sketch/catchme/actions/workflows/e2e.yml"><img src="https://github.com/kmsdevdata-sketch/catchme/actions/workflows/e2e.yml/badge.svg" alt="e2e"></a>
+  <img src="https://img.shields.io/badge/Claude_Code-plugin-E5794E" alt="Claude Code plugin">
+  <img src="https://img.shields.io/badge/any_stack-HTTP_%2B_PostgreSQL-5C6BB0" alt="any stack on PostgreSQL">
+  <img src="https://img.shields.io/badge/needs-Docker-2496ED" alt="needs Docker">
+  <img src="https://img.shields.io/badge/license-MIT-8E9BD6" alt="MIT">
+</p>
 
-catchme is a skill for coding agents (Claude Code plugin + `AGENTS.md`). It approximates your
-production specs in local Docker, puts load on your API, and reports what breaks and why — with
-evidence — then fixes it on a separate branch and re-measures.
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#what-it-catches">What it catches</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#demos">Demos</a> ·
+  <a href="#safety">Safety</a> ·
+  <a href="#limitations">Limitations</a>
+</p>
 
-![catchme load and report](resources/prisma/02-load-report.gif)
+---
 
-> **You:** 운영 사양으로 테스트해줘 / test this with production specs
+N+1 queries, exhausted connection pools, lock contention, missing indexes and races all hide on a
+laptop and show up in production. **catchme** is a skill for coding agents that rebuilds your production
+specs in local Docker — 0.5 vCPU, a `db.t3.micro`, a millisecond per DB round trip, a million rows — puts
+real load on your API, tells you what broke and why with evidence, then fixes it on a branch and
+measures again.
+
+> **You:** test this with production specs
 >
-> **Agent:** No IaC found — which specs? *(Fargate 0.5 vCPU/1 GB + RDS t3.micro)* … 100 orders succeeded
-> but stock dropped by 10; a product with stock 10 sold 95; `GET /orders` runs 80 queries per request
-> (N+1) and scans 500k rows (no index on `orders.user_id`). Fix them on a branch and re-measure?
+> **Agent:** No IaC found — which specs? *(Fargate 0.5 vCPU / 1 GB + RDS t3.micro)* … 100 orders went
+> through but stock dropped by 10; a product with stock 10 sold 95. `GET /orders` runs 80 queries per
+> request and scans 500k rows — no index on `orders.user_id`. Fix them on a branch and re-measure?
 
-## What it does
+<p align="center">
+  <img src="resources/prisma/02-load-report.gif" alt="catchme load and report in a terminal" width="88%">
+</p>
 
-1. **Analyze** the project — any language or framework that builds with a Dockerfile and talks HTTP, on PostgreSQL
-2. **Profile** production from Terraform / CDK / ECS task definitions / k8s manifests, a read-only AWS lookup, or presets
-3. **Environment** — app + Postgres with Docker `cpus` / `mem_limit`, RDS-like DB settings, Toxiproxy latency
-4. **Seed** millions of FK-consistent rows from your migrated schema, deterministically
-5. **Load** with k6 — steady load, ramps, and 100 simultaneous writes; invariants (SQL) decide whether a race happened
-6. **Collect** p50/p95/p99, throughput, errors, queries per request, EXPLAIN plans, CPU/memory, connections, lock waits, new DB sessions
-7. **Report** bottleneck candidates with evidence and stack-specific fixes, local vs production, limitations
-8. **Fix & re-measure** in a git worktree branch with the same profile, seed and scenarios → before/after table
+## What it catches
 
-Plus: "this spec holds up to N concurrent requests" (breaking-point search), authenticated APIs through
-seeded test accounts and the real login API, and an opt-in hook that flags a queries-per-request regression
-after the agent edits a repository/model file.
+| | Problem | How catchme sees it | Evidence in the report |
+|---|---|---|---|
+| 🔀 | **Races** — lost updates, overselling | 100 simultaneous writes, then SQL invariants you define | `100 sold, stock 100000 → 99998` |
+| 🔁 | **N+1 queries** | `pg_stat_statements` per request, under 1 ms of injected latency | `62.9 queries/request; one statement runs 41.9× per request` |
+| 🐢 | **Missing indexes** | `EXPLAIN` of the heaviest statements against millions of seeded rows | `Seq Scan on orders (1M rows), Filter user_id = $1` |
+| 🚰 | **Pool exhaustion · connection churn** | connections sampled every 0.25 s vs pool size, new DB sessions per request | `1.00 new sessions per request` (Django default) |
+| 🔒 | **Lock contention** | lock waits ≥ 100 ms from the PostgreSQL log, deadlocks | `18 lock waits of 100 ms or longer` |
+| 📉 | **Capacity** | breaking-point search on your target | `This spec holds up to 13 concurrent requests` |
 
-![before and after](resources/prisma/05-before-after.en.png)
+## How it works
 
-## Works with
+<p align="center">
+  <img src="assets/how-it-works.svg" alt="repo and specs → local Docker with k6, your app (0.5 vCPU), Toxiproxy (+1 ms), Postgres (db.t3.micro, 3M rows) → report → fix on a branch and re-measure" width="100%">
+</p>
 
-catchme measures from the outside — HTTP load, PostgreSQL statistics and EXPLAIN plans, container
-resources — so the app can be written in anything. The agent adds whatever else the app needs (Redis,
-queues, mocks of external APIs) through `.prod-parity/compose.override.yml`.
+1. **Analyze** the project — stack, port, endpoints, auth, Dockerfile. Anything with a Dockerfile that speaks HTTP works.
+2. **Profile** production from Terraform / CDK / ECS task definitions / k8s manifests, a read-only AWS lookup, or presets.
+3. **Build** the environment: CPU and memory limits, RDS-like Postgres settings, Toxiproxy latency, plus whatever else
+   your app needs (Redis, queues, mocks) through `compose.override.yml`.
+4. **Seed** millions of FK-consistent rows from your migrated schema, deterministically.
+5. **Load** with k6 — warm-up, steady load, ramps, and 100-at-once races — logged in through your real login API.
+6. **Report** findings with evidence, the code that causes them, stack-specific fixes, and what the numbers can't tell you.
+7. **Fix & verify** in a git worktree branch with the same profile, seed and scenarios → before/after table.
 
-Verified end to end on: **Spring Boot + JPA, Node.js + Prisma, NestJS + TypeORM, Django, FastAPI +
-SQLAlchemy, Go (net/http + pgx) + Redis**. Database: **PostgreSQL** (MySQL is planned).
+The scripts make the environment and the numbers reproducible; the agent does the judgment — what to test,
+how much data, what an invariant is, what the numbers mean and what to change.
 
 ## Install
 
@@ -50,47 +77,53 @@ SQLAlchemy, Go (net/http + pgx) + Redis**. Database: **PostgreSQL** (MySQL is pl
 /plugin install catchme --marketplace kmsdevdata-sketch/catchme
 ```
 
-(or `/plugin marketplace add kmsdevdata-sketch/catchme`, then `/plugin install catchme@catchme`)
+Then just ask: **"test this with production specs"** — or **"운영 사양으로 테스트해줘"**, or run `/catchme:catchme`.
 
-Then ask **"test this with production specs"** / **"운영 사양으로 테스트해줘"**, or run `/catchme:catchme`.
+Needs Docker with Compose v2 (macOS, Linux; Windows via WSL). Python 3 and curl are used when present —
+without Python the scripts run in a container. Other agents: see [AGENTS.md](AGENTS.md).
 
-Requirements: Docker with Compose v2 (macOS, Linux; Windows via WSL). Python 3 and curl are used when
-present; without Python the scripts run in a container. Other agents: see [AGENTS.md](AGENTS.md).
+## Demos
 
-## Try a demo
+Six demo shops with the same planted bugs. Every one was taken from "bugs in" to "fixed and re-measured"
+by catchme; the Go one was set up from scratch by an agent that had only the skill.
 
-Six demo shops with the same planted bugs (N+1, missing index, lost-update + oversell race), one per
-stack: [`prisma`](examples/demo-shop-prisma), [`nest-typeorm`](examples/demo-shop-nest-typeorm),
-[`spring`](examples/demo-shop-spring), [`django`](examples/demo-shop-django), [`fastapi`](examples/demo-shop-fastapi),
-and [`go`](examples/demo-shop-go) — a stack with no detector or reference (Go net/http + pgx + Redis).
-Results for all six: [resources/README.md](resources/README.md).
+| Stack | Queries/request | Order list p95 | Races (lost update / oversell) |
+|---|---:|---:|---|
+| [Node.js + Prisma](examples/demo-shop-prisma) | 61 → 3 | 1,677 → 110 ms | ❌❌ → ✅✅ |
+| [NestJS + TypeORM](examples/demo-shop-nest-typeorm) | 63 → 2 | 1,232 → 111 ms | ❌❌ → ✅✅ |
+| [Spring Boot + JPA](examples/demo-shop-spring) | 62 → 2 | 1,175 → 512 ms | ❌❌ → ✅✅ |
+| [Django](examples/demo-shop-django) | 64 → 3 | 2,728 → 309 ms | ❌❌ → ✅✅ |
+| [FastAPI + SQLAlchemy](examples/demo-shop-fastapi) | 62 → 2 | 2,050 → 497 ms | ❌❌ → ✅✅ |
+| [Go net/http + pgx + Redis](examples/demo-shop-go) | 81 → 2 | 1,966 → 47 ms | ❌❌ → ✅✅ |
+
+ECS Fargate 0.5 vCPU / 1 GB, RDS `db.t3.micro`, 1 ms app↔DB, 1M orders. GIFs, screenshots and raw reports
+for each: [resources/](resources/README.md).
 
 ```bash
 cd examples/demo-shop-prisma
 CM=../../skills/catchme/scripts/catchme
 $CM init
 $CM profile --app-preset ecs-fargate:0.5vcpu-1gb --db-preset rds:db.t3.micro
-$CM all            # gen → up → seed (1M orders) → load → report, ~5 min
-$CM breakpoint && $CM report
+$CM all          # gen → up → seed (1M orders) → load → report, ~5 min
 $CM teardown
 ```
 
-## What it never does
+## Safety
 
-- Connect to anything outside local Docker. It stops if `.env`, app settings or the load target point
-  at a non-local host.
-- Call AWS write APIs. Spec lookup uses `describe-*` / `list-*` only and never outputs credentials.
-- Use production accounts or secrets.
-- Touch your current branch. Fixes go to a git worktree branch you review.
+- **Local Docker only.** It refuses when `.env`, app settings or the load target point at a non-local host,
+  and won't bake an `.env` with real endpoints into the test image.
+- **Read-only AWS.** Spec lookup uses `describe-*` / `list-*` only and never prints credentials.
+- **Test accounts and test secrets only.**
+- **Your branch stays untouched.** Fixes go to a git worktree branch you review.
 
 Everything it generates lives in `.prod-parity/` in your project — readable and editable.
 
 ## Limitations
 
-Results are a **production approximation**, not a reproduction: CPU clock/generation, disk IOPS, RDS
-burst-credit depletion, cross-AZ variance and real data distributions are not modeled, and every report
-says so. Run-to-run noise is real — the breaking point moves by about ±3 concurrent requests between
-identical runs — so treat small differences as noise unless they repeat.
+Results are a **production approximation**, not a reproduction. CPU generation, disk IOPS, RDS burst-credit
+depletion, cross-AZ variance and real data distributions aren't modeled, and every report says so. Run-to-run
+noise is real — the breaking point moves by about ±3 concurrent requests between identical runs, and a JVM at
+0.5 vCPU swings more — so trust differences that repeat. PostgreSQL only for now (MySQL is planned).
 
 ## License
 
