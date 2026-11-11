@@ -409,6 +409,10 @@ def scan_env_hosts(root):
         candidates += re.findall(r"['\"]HOST['\"]\s*:\s*['\"]([^'\"]+)['\"]", t)
         for v in candidates:
             v = v.strip().strip("'\"")
+            if "${" in v or v.startswith("$"):  # env placeholder like ${DB_HOST:localhost}: resolved at runtime, not a host
+                v = re.sub(r"\$\{[^}:]*:?([^}]*)\}", r"\1", v)  # keep only the default value, if any
+                if not v or v.startswith("$"):
+                    continue
             host = url_host(v) or (v if re.match(r"^[a-z0-9.-]+\.[a-z]{2,}$", v, re.I) else None)
             if host and looks_production(host) and (f.name, host) not in seen:
                 seen.add((f.name, host))
