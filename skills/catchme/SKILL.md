@@ -1,7 +1,7 @@
 ---
 name: catchme
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/catchme *)
-description: Reproduce production-like specs (CPU/memory limits, RDS instance class, app↔DB latency, production data volume) in local Docker, run k6 load and race scenarios, and report N+1 queries, connection-pool exhaustion, lock contention, missing indexes and race conditions with evidence. Use when the user asks to "test with production specs", "운영 사양으로 테스트해줘", load-test an API, check N+1 / race conditions / concurrency, find how many concurrent requests a spec can handle, or compare instance sizes (e.g. t3.micro vs t3.small). Works with any containerizable HTTP app on PostgreSQL, whatever the language or framework (verified on Spring JPA, Prisma, NestJS/TypeORM, Django, FastAPI and Go).
+description: Reproduce production-like specs (CPU/memory limits, RDS instance class, app↔DB latency, production data volume) in local Docker, run k6 load and race scenarios, and report N+1 queries, connection-pool exhaustion, lock contention, missing indexes and race conditions with evidence. Use when the user asks to "test with production specs", "운영 사양으로 테스트해줘", "本番スペックでテストして", "按生产环境规格测一下", load-test an API, check N+1 / race conditions / concurrency, find how many concurrent requests a spec can handle, or compare instance sizes (e.g. t3.micro vs t3.small). Works with any containerizable HTTP app on PostgreSQL, whatever the language or framework (verified on Spring JPA, Prisma, NestJS/TypeORM, Django, FastAPI and Go).
 ---
 
 # catchme
