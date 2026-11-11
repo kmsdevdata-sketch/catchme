@@ -21,7 +21,7 @@ T = {
 
 
 def _pct(b, a):
-    if b in (None, 0) or a is None:
+    if b is None or a is None or abs(b) < 0.05:  # too small to express as a percentage
         return "—"
     d = (a - b) / b * 100
     return f"{d:+.0f}%"

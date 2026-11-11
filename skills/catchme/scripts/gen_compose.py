@@ -58,6 +58,9 @@ def build_compose(project, profile, mode, context, dockerfile):
     extra = {k: str(v) for k, v in (papp.get("env") or {}).items()}
     extra.update({k: str(v) for k, v in (app_cfg.get("env") or {}).items()})
     allowed = {h.strip() for h in os.environ.get("CATCHME_ALLOW_HOSTS", "").split(",") if h.strip()}
+    override = pp_dir() / "compose.override.yml"
+    if override.exists():  # services you add in compose.override.yml are local containers too
+        allowed |= set((read_yaml(override, default={}).get("services") or {}).keys())
     for k, v in extra.items():  # safety rule 1: nothing in the app's env may point outside local Docker
         for m in re.finditer(r"[a-zA-Z][\w+.-]*://[^\s'\"]+", v):
             host = url_host(m.group(0))

@@ -84,9 +84,9 @@ L = {
         "inv_ok": "✅ holds", "inv_bad": "❌ violated", "inv_none": "—",
         "lim_rows": [
             ("CPU", "Docker `cpus` limit", "clock/generation differences and Fargate variance not modeled"),
-            ("Memory", "`mem_limit`", "runtime settings (JVM heap etc.) must match production"),
+            ("Memory", "`mem_limit`", "runtime settings (heap size, GC, thread/worker counts) must match production"),
             ("Network latency", "Toxiproxy latency/jitter", "cross-AZ variance and packet loss only approximated"),
-            ("Disk I/O", "not modeled (v2)", "EBS/RDS storage IOPS not reflected"),
+            ("Disk I/O", "not modeled", "EBS/RDS storage IOPS not reflected"),
             ("RDS burst credits", "`cpu_mode` switch only", "credit depletion over time not modeled"),
             ("Data", "synthetic data", "real distributions and hot keys may differ"),
         ],
@@ -137,9 +137,9 @@ L = {
         "inv_ok": "✅ 유지", "inv_bad": "❌ 위반", "inv_none": "—",
         "lim_rows": [
             ("CPU", "Docker `cpus` 제한", "클럭·세대 차이, Fargate 성능 편차 미반영"),
-            ("메모리", "`mem_limit`", "JVM 등 런타임 설정은 사용자가 맞춰야 함"),
+            ("메모리", "`mem_limit`", "런타임 설정(힙 크기, GC, 스레드·워커 수)은 운영과 맞춰야 함"),
             ("네트워크 지연", "Toxiproxy latency·jitter", "AZ 간 변동, 패킷 손실 패턴은 근사"),
-            ("디스크 I/O", "MVP 미지원 (v2)", "EBS·RDS 스토리지 IOPS 미반영"),
+            ("디스크 I/O", "재현하지 않음", "EBS·RDS 스토리지 IOPS 미반영"),
             ("RDS 버스트 크레딧", "`cpu_mode` 전환만 지원", "t 계열 크레딧 소진 과정 미반영"),
             ("데이터", "합성 데이터", "실제 분포, 핫 키 편향과 다를 수 있음"),
         ],
@@ -228,7 +228,7 @@ def findings(m, base, stack, t):
         for svc, rs in (r.get("resources") or {}).items():
             if svc not in ("app", "db"):
                 continue
-            if (rs.get("cpu_avg_of_limit_pct") or 0) >= 85:
+            if (rs.get("cpu_avg_of_limit_pct") or 0) >= 85 and (http.get("p95_ms") or 0) > targets["p95_ms"]:
                 out.append(("medium", t["f_cpu"].format(svc=svc, run=name, avg=rs["cpu_avg_of_limit_pct"],
                                                         mx=rs.get("cpu_max_of_limit_pct") or 0, cores=rs.get("cpu_limit_cores")), [], t["fix_cpu"]))
             if rs.get("mem_max_mb") and rs.get("mem_limit_mb") and rs["mem_max_mb"] >= 0.9 * rs["mem_limit_mb"]:
@@ -402,7 +402,24 @@ def main():
     ap.add_argument("--baseline", default="baseline", help="label of the local baseline run (used if present)")
     ap.add_argument("--before", help="label to compare against (fix verification)")
     ap.add_argument("--lang", default="en", choices=sorted(L))
+    ap.add_argument("--analysis", help="Markdown file with your interpretation: replaces the Analysis placeholder "
+                                       "in the newest report and latest.md (no new report is generated)")
     a = ap.parse_args()
+    if a.analysis:
+        out_dir = pp_dir() / "reports"
+        newest = sorted(p for p in out_dir.glob("*.md") if p.name != "latest.md")[-1]
+        text = Path(a.analysis).read_text().strip()
+        s = newest.read_text()
+        placeholders = [L[k]["analysis_todo"] for k in L]
+        hit = next((ph for ph in placeholders if ph in s), None)
+        if hit:
+            s = s.replace(hit, text)
+        else:  # replace an earlier analysis: everything between "## Analysis/분석" and the next heading
+            s = re.sub(r"(?ms)^(## (?:Analysis|분석)\n\n).*?(?=^## )", lambda m: m.group(1) + text + "\n\n", s, count=1)
+        newest.write_text(s)
+        shutil.copyfile(newest, out_dir / "latest.md")
+        info(f"analysis written into {newest.relative_to(pp_dir().parent)} and reports/latest.md")
+        return
     runs = pp_dir() / "runs"
     m = read_json(runs / a.label / "metrics.json")
     base = read_json(runs / a.baseline / "metrics.json", default={}) if a.baseline != a.label else {}

@@ -1,0 +1,21 @@
+seed: 42
+tables:
+  users: 10000
+  products: 2000
+  orders: 1000000
+  order_items: 3000000
+overrides:
+  users:
+    email: "'user' || i || '@catchme.test'"
+    password_hash: "'$2a$10$IucOZy80Pc08KxVflsIokeCDZKhurXeYXrVQ0KNsCZnzF4rpRmCnq'"
+    name: "'User ' || i"
+  products:
+    name: "'Product ' || i"
+    stock: "CASE WHEN i = 2 THEN 10 ELSE 100000 END"
+    price: "1000 + (i % 50) * 100"
+  orders:
+    status: "(ARRAY['PAID','SHIPPED','CANCELLED'])[1 + (i % 3)]"
+    created_at: "now() - (i % 730) * interval '1 day'"
+  order_items:
+    quantity: "1 + (i % 3)"
+    unit_price: "1000 + (i % 50) * 100"

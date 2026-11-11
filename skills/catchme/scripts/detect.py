@@ -326,6 +326,72 @@ def detect_fastapi(root):
     }
 
 
+# --------------------------------------------------------------------------- generic (any other stack)
+
+LANG_MARKERS = [("go.mod", "go"), ("Cargo.toml", "rust"), ("Gemfile", "ruby"), ("composer.json", "php"),
+                ("mix.exs", "elixir"), ("build.gradle", "jvm"), ("build.gradle.kts", "jvm"), ("pom.xml", "jvm"),
+                ("package.json", "node"), ("pyproject.toml", "python"), ("requirements.txt", "python")]
+GENERIC_ROUTES = [
+    # Go net/http 1.22 patterns and classic HandleFunc
+    re.compile(r"""\.(?:HandleFunc|Handle)\(\s*"(?:(GET|POST|PUT|DELETE|PATCH)\s+)?(/[^"]*)\""""),
+    # gin / echo / chi / fiber / express-like:  r.GET("/x"  e.POST("/x"  app.get('/x'
+    re.compile(r"""\b\w+\.(GET|POST|PUT|DELETE|PATCH|Get|Post|Put|Delete|Patch|get|post|put|delete|patch)\(\s*["'`](/[^"'`]*)["'`]"""),
+    # Rails / Laravel style routes files:  get '/x'   Route::get('/x'
+    re.compile(r"""^\s*(?:Route::)?(get|post|put|delete|patch)\s*\(?\s*['"](/[^'"]*)['"]""", re.M),
+]
+
+
+def detect_generic(root):
+    """Fallback for any stack: enough to build and wire the app; the agent fills in the rest."""
+    lang = next((l for marker, l in LANG_MARKERS if (root / marker).exists()), None)
+    if not lang and any(root.glob("*.csproj")):
+        lang = "dotnet"
+    port = None
+    df = next((root / n for n in ("Dockerfile", "dockerfile", "Dockerfile.prod") if (root / n).exists()), None)
+    if df:
+        m = re.search(r"^\s*EXPOSE\s+(\d+)", read(df), re.M | re.I)
+        port = int(m.group(1)) if m else None
+    exts = (".go", ".rs", ".rb", ".php", ".ex", ".java", ".kt", ".cs", ".js", ".ts", ".py")
+    endpoints, db, mentions = [], None, ""
+    for src in walk(root, exts=exts, limit=5000):
+        t = read(src)
+        mentions += t[:20000] if db is None else ""
+        for rx in GENERIC_ROUTES:
+            for m in rx.finditer(t):
+                method = (m.group(1) or "ANY").upper()
+                endpoints.append({"method": method, "path": m.group(2), "file": rel(root, src), "line": line_of(t, m.start())})
+        if port is None:
+            m = re.search(r"""(?:PORT['"]?\s*[,:]\s*['"]|:)(\d{4,5})['"]""", t)
+            if m and int(m.group(1)) not in DATASTORE_PORTS:
+                port = int(m.group(1))
+    deps = "\n".join(read(root / n) for n in ("go.mod", "Cargo.toml", "Gemfile", "composer.json", "package.json",
+                                               "requirements.txt", "pyproject.toml", "pom.xml", "build.gradle") if (root / n).exists())
+    blob = deps + mentions
+    if re.search(r"postgres|pgx|lib/pq|psycopg|\bpg\b|npgsql|sqlx.*postgres|diesel.*postgres", blob, re.I):
+        db = "postgresql"
+    elif re.search(r"mysql|mariadb", blob, re.I):
+        db = "mysql"
+    auth = ["jwt"] if re.search(r"jwt|jose", blob, re.I) else []
+    seen, uniq = set(), []
+    for e in endpoints:
+        k = (e["method"], e["path"])
+        if k not in seen:
+            seen.add(k)
+            uniq.append(e)
+    return {
+        "stack": "generic", "language": lang or "unknown", "framework": None, "build_tool": None,
+        "port": port or 8080, "db_engine": db, "db_source": None, "endpoints": uniq, "auth_kinds": auth,
+        "run_command": None,
+        "query_file_globs": ["*repo*", "*repository*", "*dao*", "*store*", "*model*", "*query*", "*queries*", "*.sql"],
+        "db_env": {
+            "DATABASE_URL": "postgres://{user}:{password}@{host}:{port}/{db}?sslmode=disable",
+            "DB_HOST": "{host}", "DB_PORT": "{port}", "DB_NAME": "{db}", "DB_USER": "{user}", "DB_PASSWORD": "{password}",
+            "PGHOST": "{host}", "PGPORT": "{port}", "PGDATABASE": "{db}", "PGUSER": "{user}", "PGPASSWORD": "{password}",
+        },
+        "default_pool": None, "default_env": {}, "score": 1,
+    }
+
+
 # --------------------------------------------------------------------------- env scan
 
 DB_VAR = re.compile(r"^\s*(?:export\s+)?([A-Z0-9_]*(?:DATABASE|DB|POSTGRES|PG|JDBC|DATASOURCE)[A-Z0-9_]*)\s*=\s*(.+)$", re.M)
@@ -351,13 +417,40 @@ def scan_env_hosts(root):
     return warnings
 
 
+SERVICE_HINTS = {
+    "redis": r"\bREDIS_URL\b|go-redis|redis-py|\bioredis\b|\bredis\b['\"]|jedis|lettuce|spring-boot-starter-data-redis|django-redis",
+    "kafka": r"\bKAFKA_|kafka-go|kafkajs|confluent[-_]kafka|spring-kafka|sarama",
+    "rabbitmq": r"\bAMQP_URL\b|\bRABBITMQ_|amqplib|\bpika\b|spring-boot-starter-amqp|amqp091",
+    "mongodb": r"\bMONGO(DB)?_URL\b|mongoose|pymongo|mongo-driver|spring-boot-starter-data-mongodb",
+    "elasticsearch": r"\bELASTIC(SEARCH)?_URL\b|elasticsearch-py|@elastic/elasticsearch|go-elasticsearch",
+    "s3/object storage": r"\bS3_BUCKET\b|aws-sdk.*s3|boto3|@aws-sdk/client-s3|aws-sdk-go.*s3",
+}
+
+
+def scan_services(root):
+    """Services the app seems to use besides Postgres — the agent adds them in compose.override.yml."""
+    texts = []
+    for p in list(walk(root, exts=(".go", ".py", ".js", ".ts", ".java", ".kt", ".rb", ".php", ".rs", ".cs",
+                                   ".yml", ".yaml", ".properties", ".toml", ".json", ".mod", ".xml", ".txt"), limit=4000)):
+        texts.append(read(p)[:50000])
+    blob = "\n".join(texts)
+    found = [name for name, rx in SERVICE_HINTS.items() if re.search(rx, blob)]
+    return [f"The app seems to use {name}. catchme starts only app + Postgres: add {name} (or a local stand-in) "
+            f"in .prod-parity/compose.override.yml and point the app's env at it." for name in found]
+
+
 # --------------------------------------------------------------------------- main
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--print", action="store_true", help="print project.json to stdout")
     ap.add_argument("--force", action="store_true", help="overwrite user edits in project.json")
+    ap.add_argument("--globs", action="store_true", help="print query_file_globs from project.json (for hooks)")
     args = ap.parse_args()
+    if args.globs:
+        proj = read_json(pp_dir() / "project.json", default={})
+        print("\n".join(proj.get("query_file_globs") or []))
+        return
 
     root = project_root()
     cands = [c for c in (detect_spring(root), detect_typeorm(root), detect_prisma(root),
@@ -366,8 +459,9 @@ def main():
     previous = read_json(out_path, default={}) if out_path.exists() else {}
 
     if not cands:
-        die("could not detect a supported stack (Spring Boot + JPA, Node + Prisma/TypeORM, Django, FastAPI). "
-            "Write .prod-parity/project.json by hand from the example in SKILL.md.", 3)
+        cands = [detect_generic(root)]
+        info("no stack-specific detector matched — using the generic profile (Dockerfile + common DB env vars). "
+             "Check project.json: port, health_path, endpoints and app.env are yours to fill in.")
     cands.sort(key=lambda c: (c["score"], len(c["endpoints"])), reverse=True)
     best = cands[0]
 
@@ -380,6 +474,7 @@ def main():
         dockerfile = ".prod-parity/app.Dockerfile"
 
     warnings = scan_env_hosts(root)
+    warnings += scan_services(root)
     if best["db_engine"] and best["db_engine"] != "postgresql":
         warnings.append(f"DB engine '{best['db_engine']}' detected — catchme MVP supports PostgreSQL only.")
     if not dockerfile:
@@ -433,7 +528,7 @@ def main():
     write_json(out_path, project)
     if args.print:
         print(json.dumps(project, indent=2, ensure_ascii=False))
-    info(f"stack: {project['stack']} ({project['build_tool']}), db: {project['db']['engine']}, "
+    info(f"stack: {project['stack']} ({project['build_tool'] or project['language']}), db: {project['db']['engine']}, "
          f"port: {project['app']['port']}, endpoints: {len(project['endpoints'])}, auth: {','.join(project['auth']['kinds']) or 'none'}")
     for w in warnings:
         info(f"WARNING: {w}")

@@ -1,0 +1,39 @@
+invariants:
+  - name: stock_consistency
+    description: final stock = initial stock - quantity sold during the run (product 1)
+    before: |
+      SELECT p.stock AS stock_before,
+             (SELECT COALESCE(MAX(id), 0) FROM order_items) AS max_item_id
+      FROM products p WHERE p.id = 1
+    check: |
+      SELECT p.stock = ({{snap}}->>'stock_before')::int - COALESCE(SUM(oi.quantity), 0) AS ok,
+             ({{snap}}->>'stock_before')::int AS stock_before,
+             p.stock AS stock_after,
+             COALESCE(SUM(oi.quantity), 0)::int AS sold_during_run
+      FROM products p
+      LEFT JOIN order_items oi ON oi.product_id = p.id AND oi.id > ({{snap}}->>'max_item_id')::int
+      WHERE p.id = 1
+      GROUP BY p.stock
+
+  - name: no_negative_stock
+    description: stock never goes below zero
+    check: |
+      SELECT COUNT(*) = 0 AS ok, COUNT(*) AS negative_rows FROM products WHERE stock < 0
+
+  # Oversell: seed product 2 with stock 10, race 100 orders at it (plan: expected_status: [409])
+  - name: no_oversell
+    description: units sold never exceed the starting stock (product 2)
+    before: |
+      SELECT p.stock AS stock_before,
+             (SELECT COALESCE(MAX(id), 0) FROM order_items) AS max_item_id
+      FROM products p WHERE p.id = 2
+    check: |
+      SELECT COALESCE(SUM(oi.quantity), 0) <= ({{snap}}->>'stock_before')::int
+             AND p.stock = ({{snap}}->>'stock_before')::int - COALESCE(SUM(oi.quantity), 0) AS ok,
+             ({{snap}}->>'stock_before')::int AS stock_before,
+             p.stock AS stock_after,
+             COALESCE(SUM(oi.quantity), 0)::int AS sold_during_run
+      FROM products p
+      LEFT JOIN order_items oi ON oi.product_id = p.id AND oi.id > ({{snap}}->>'max_item_id')::int
+      WHERE p.id = 2
+      GROUP BY p.stock

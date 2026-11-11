@@ -1,0 +1,16 @@
+# demo-shop-go: Redis for the product cache, plus production-like runtime sizing.
+# Go < 1.25 and pgxpool size themselves from the host CPU count, not the 0.5 vCPU limit.
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb"]
+    cpus: 0.5
+    mem_limit: 512m
+    memswap_limit: 512m
+  app:
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      GOMAXPROCS: "2"
+      DB_MAX_CONNS: "4"
+    depends_on:
+      redis: {condition: service_started}

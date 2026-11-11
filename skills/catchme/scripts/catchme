@@ -57,7 +57,13 @@ load_env() {
 
 compose() {
   local file="${CM_COMPOSE_FILE:-docker-compose.yml}"
-  docker compose -p "$(project_name)" --project-directory "$PP" -f "$PP/$file" "$@"
+  # .prod-parity/compose.override.yml (yours, never regenerated): extra services (Redis, queues, ...),
+  # env or limits on top of the generated file. Same project, so teardown removes them too.
+  if [ -f "$PP/compose.override.yml" ]; then
+    docker compose -p "$(project_name)" --project-directory "$PP" -f "$PP/$file" -f "$PP/compose.override.yml" "$@"
+  else
+    docker compose -p "$(project_name)" --project-directory "$PP" -f "$PP/$file" "$@"
+  fi
 }
 
 psql_app()  { compose exec -T db psql -U monitor -d app -X -At -q -v ON_ERROR_STOP=1 "$@"; }
@@ -105,6 +111,12 @@ apply_toxics() {
   else
     log "app↔db latency: none"
   fi
+}
+
+up_services() { # everything in the compose files except tool profiles (k6, mock-oauth2 unless asked)
+  local svcs; svcs="$(compose config --services 2>/dev/null | grep -v -x -E 'k6|mock-oauth2' | tr '\n' ' ')"
+  [ -n "$1" ] && svcs="$svcs mock-oauth2"
+  echo "${svcs:-db toxiproxy app}"
 }
 
 check_docker_capacity() {
@@ -280,10 +292,9 @@ cmd_up() {
   # shellcheck disable=SC2086
   log "building and starting containers (output: .prod-parity/state/up.log, CATCHME_VERBOSE=1 to stream it)"
   if [ "${CATCHME_VERBOSE:-0}" = "1" ]; then
-    compose $oauth up -d --build --remove-orphans db toxiproxy app $( [ -n "$oauth" ] && echo mock-oauth2 ) \
+    compose $oauth up -d --build --remove-orphans $(up_services "$oauth") \
       || die "docker compose up failed"
-  elif ! compose --progress plain $oauth up -d --build --remove-orphans db toxiproxy app \
-         $( [ -n "$oauth" ] && echo mock-oauth2 ) >"$PP/state/up.log" 2>&1; then
+  elif ! compose --progress plain $oauth up -d --build --remove-orphans $(up_services "$oauth") >"$PP/state/up.log" 2>&1; then
     tail -n 40 "$PP/state/up.log" >&2
     die "docker compose up failed — full log: .prod-parity/state/up.log"
   fi
@@ -427,7 +438,10 @@ cmd_quick() {
 cmd_hooks() {
   mkdir -p "$PP"
   case "${1:-}" in
-    on)  [ -f "$PP/hooks.enabled" ] || printf '# catchme hooks opt-in. Extra glob patterns (one per line) for query-related files:\n' >"$PP/hooks.enabled"
+    on)  if [ ! -f "$PP/hooks.enabled" ]; then
+           { printf '# catchme hooks opt-in. Glob patterns (one per line) for query-related files — edit freely:\n'
+             py detect.py --globs 2>/dev/null || true; } >"$PP/hooks.enabled"
+         fi
          log "hooks enabled — quick check runs after edits to query-related files" ;;
     off) rm -f "$PP/hooks.enabled"; log "hooks disabled" ;;
     *)   die "usage: catchme hooks on|off" ;;

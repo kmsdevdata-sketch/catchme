@@ -1,6 +1,7 @@
 name: e2e
 
-# Runs the FastAPI demo end to end on Linux and checks that catchme finds the planted bugs.
+# Runs demos end to end on Linux and checks that catchme finds the planted bugs: FastAPI (stack
+# detector) and Go + Redis (generic profile + compose.override.yml).
 # The `no-python` leg hides python3 so the scripts take the python:3.12-slim container path.
 on:
   push:
@@ -34,12 +35,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: [host, no-python]
+        include:
+          - { demo: fastapi, python: host }
+          - { demo: fastapi, python: no-python }
+          - { demo: go, python: host }        # generic detection + compose.override.yml (Redis)
     env:
       CM: ${{ github.workspace }}/skills/catchme/scripts/catchme
     defaults:
       run:
-        working-directory: examples/demo-shop-fastapi
+        working-directory: examples/demo-shop-${{ matrix.demo }}
     steps:
       - uses: actions/checkout@v4
 
@@ -91,12 +95,12 @@ jobs:
         if: always()
         run: |
           "$CM" teardown
-          test "$(docker ps -aq --filter label=com.docker.compose.project=catchme-demo-shop-fastapi | wc -l)" -eq 0
+          test "$(docker ps -aq --filter label=com.docker.compose.project=catchme-demo-shop-${{ matrix.demo }} | wc -l)" -eq 0
 
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: report-${{ matrix.python }}
-          path: examples/demo-shop-fastapi/.prod-parity/reports/
+          name: report-${{ matrix.demo }}-${{ matrix.python }}
+          path: examples/demo-shop-${{ matrix.demo }}/.prod-parity/reports/
           if-no-files-found: ignore
