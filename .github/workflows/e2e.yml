@@ -65,10 +65,10 @@ jobs:
           "$CM" status
 
       - name: seed
-        run: "$CM" seed
+        run: '"$CM" seed'
 
       - name: load
-        run: "$CM" load
+        run: '"$CM" load'
 
       - name: report
         run: |
