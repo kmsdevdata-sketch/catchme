@@ -147,6 +147,14 @@ def warmup_config(plan, run, cfg, label):
     return {k: v for k, v in wc.items() if v is not None}
 
 
+def auth_label(plan, a):
+    """`none` + Authorization/Cookie headers set per run = fixed test tokens, not unauthenticated."""
+    if a["mode"] == "none" and any(k.lower() in ("authorization", "cookie")
+                                   for r in plan["runs"] for k in (r.get("headers") or {})):
+        return "manual"
+    return a["mode"]
+
+
 def prepare(label, quick=False):
     plan = load_plan()
     check_base_url(plan)
@@ -191,7 +199,7 @@ def prepare(label, quick=False):
                 write_json(pp_dir() / "runs" / label / run["name"] / "warmup.json", wc)
         names.append(run["name"])
     write_json(pp_dir() / "runs" / label / "plan_meta.json",
-               {"label": label, "quick": quick, "auth_mode": a["mode"], "targets": tg, "runs": names})
+               {"label": label, "quick": quick, "auth_mode": auth_label(plan, a), "targets": tg, "runs": names})
     print("\n".join(names))
 
 

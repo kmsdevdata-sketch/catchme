@@ -58,7 +58,7 @@ How many concurrent users can this spec handle? Compare t3.micro and t3.small.
 ```
 
 **3. Answer one question** (which production specs, if your repo has no Terraform / CDK / ECS / k8s files),
-wait about 10 minutes, and read `.prod-parity/reports/latest.md`. Say *yes* when the agent offers to fix
+wait 10–15 minutes on a small app (longer on a large one, where the agent spends time designing scenarios), and read `.prod-parity/reports/latest.md`. Say *yes* when the agent offers to fix
 what it found on a branch and re-measure.
 
 New to it? The **[step-by-step guide](docs/getting-started.md)** walks through every step, what you'll be

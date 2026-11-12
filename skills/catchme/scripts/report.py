@@ -58,6 +58,7 @@ L = {
         "auth_modes": {"login": "seeded test accounts + real login API (auth cost included)",
                        "token": "tokens minted with the test secret (login cost not included)",
                        "bypass": "⚠️ auth bypass profile — auth cost NOT included",
+                       "manual": "fixed test tokens in request headers (login and token verification cost not measured)",
                        "none": "no auth"},
         "sev": {"critical": "🔴 critical", "high": "🟠 high", "medium": "🟡 medium"},
         "f_n1": "Possible N+1 on `{run}`: {qpr:.1f} queries/request; one statement runs {cpr:.1f}× per request",
@@ -65,6 +66,9 @@ L = {
         "f_pool": "Connection pool saturated on `{run}`: up to {active} active connections with pool size {pool}",
         "f_maxconn": "DB connections near max_connections on `{run}`: {total} of {max}",
         "ev_lock": "{e} lock waits of 100 ms or longer logged by PostgreSQL during the run",
+        "f_binds": "Statement with ~{n} bind parameters on `{run}` — grows with the data and fails at the driver limit",
+        "ev_binds": "PostgreSQL JDBC allows 32,767 parameters per statement (the wire protocol 65,535); an IN list built from a collection hits it as data grows",
+        "fix_binds": "pass one array parameter (`= ANY(?)`), page the input, or aggregate in SQL",
         "f_churn": "New DB connection per request on `{run}`: up to {s} sessions opened for {r} requests (no connection pooling)",
         "ev_churn": "{x:.2f} new sessions per request — each pays TCP + auth + session setup over the app↔db latency",
         "f_lock": "Lock contention on `{run}`: up to {n} sessions waiting on locks ({s} samples), deadlocks {d}",
@@ -111,6 +115,7 @@ L = {
         "auth_modes": {"login": "시딩한 테스트 계정 + 실제 로그인 API (인증 비용 포함)",
                        "token": "테스트 비밀키로 직접 발급한 토큰 (로그인 비용 미포함)",
                        "bypass": "⚠️ 인증 우회 프로파일 — 인증 비용 미포함",
+                       "manual": "요청 헤더에 고정 테스트 토큰 (로그인·토큰 검증 비용 미포함)",
                        "none": "인증 없음"},
         "sev": {"critical": "🔴 치명", "high": "🟠 높음", "medium": "🟡 중간"},
         "f_n1": "`{run}`에서 N+1 의심: 요청당 쿼리 {qpr:.1f}개, 한 쿼리가 요청당 {cpr:.1f}번 실행",
@@ -118,6 +123,9 @@ L = {
         "f_pool": "`{run}`에서 커넥션 풀 포화: 활성 커넥션 최대 {active}개, 풀 크기 {pool}",
         "f_maxconn": "`{run}`에서 DB 커넥션이 max_connections에 근접: {total} / {max}",
         "ev_lock": "실행 중 PostgreSQL이 기록한 100 ms 이상 락 대기 {e}건",
+        "f_binds": "`{run}`에서 바인딩 파라미터 약 {n}개인 쿼리 — 데이터가 늘면 드라이버 한도에서 실패",
+        "ev_binds": "PostgreSQL JDBC는 쿼리당 파라미터 32,767개(프로토콜 65,535개)까지 허용 — 컬렉션으로 만든 IN 목록은 데이터가 늘면 한도에 걸림",
+        "fix_binds": "배열 파라미터 하나로 전달(`= ANY(?)`), 입력을 나눠 처리, 또는 SQL에서 집계",
         "f_churn": "`{run}`에서 요청마다 DB 커넥션을 새로 엶: 요청 {r}건에 세션 {s}개 (커넥션 풀 없음)",
         "ev_churn": "요청당 새 세션 {x:.2f}개 — 매번 앱↔DB 지연 위에서 TCP·인증·세션 설정 비용을 냄",
         "f_lock": "`{run}`에서 락 경합: 락 대기 세션 최대 {n}개 ({s}회 관측), 데드락 {d}",
@@ -177,6 +185,7 @@ def findings(m, base, stack, t):
     targets = m.get("targets") or {"p95_ms": 500, "error_rate": 0.01}
     bmap = {r["name"]: r for r in (base or {}).get("runs", [])}
     seen_index = set()
+    seen_binds = set()
     churn = []
     for r in m["runs"]:
         if r.get("kind") == "auth":
@@ -191,10 +200,19 @@ def findings(m, base, stack, t):
             out.append(("high", t["f_n1"].format(run=name, qpr=qpr, cpr=top["calls_per_request"]),
                         [f"`{short_sql(top['query'])}` — {fnum(top['calls'])} calls / {fnum(http['requests'])} requests, mean {top.get('mean_ms')} ms"],
                         FIX["n+1"].get(stack, "")))
-        # missing index
+        # statements with huge bind lists (IN (...) built from a collection): fail past the driver limit
+        texts = [s.get("query") or "" for s in stmts] + [sc.get("filter") or "" for e in (r.get("explain") or [])
+                                                            for sc in (e.get("plan") or {}).get("seq_scans") or []]
+        max_bind = max((int(n) for txt in texts for n in re.findall(r"\$(\d+)", txt)), default=0)
+        if max_bind >= 500 and name not in seen_binds:
+            seen_binds.add(name)
+            out.append(("high", t["f_binds"].format(run=name, n=fnum(max_bind)), [t["ev_binds"]], t["fix_binds"]))
+        # missing index (a pure `<>` filter can't use an index — not a candidate)
         for e in r.get("explain") or []:
             for sc in (e.get("plan") or {}).get("seq_scans") or []:
                 rows = sc.get("table_rows") or 0
+                if re.fullmatch(r"\(*\s*[\w.\"]+\s*<>\s*\$\d+\s*\)*", (sc.get("filter") or "").strip()):
+                    continue
                 if rows >= 10000 and sc.get("filter") and (sc["table"], sc["filter"]) not in seen_index:
                     seen_index.add((sc["table"], sc["filter"]))
                     out.append(("high", t["f_index"].format(table=sc["table"], rows=fnum(int(rows)), flt=short_sql(sc["filter"], 100)),

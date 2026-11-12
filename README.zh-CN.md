@@ -58,7 +58,7 @@
 ```
 
 **3. 回答一个问题**（如果仓库里没有 Terraform / CDK / ECS / k8s 文件，会问你要复刻哪种生产规格），
-等大约 10 分钟，然后查看 `.prod-parity/reports/latest.md`。当 agent 提出在分支上修复
+小型应用约需 10–15 分钟（大型项目中 agent 设计场景要花更多时间，会更久），然后查看 `.prod-parity/reports/latest.md`。当 agent 提出在分支上修复
 发现的问题并重新测量时，回答 *好的* 即可。
 
 第一次使用？**[分步指南](docs/getting-started.zh-CN.md)** 会带你走完每一步，包括会被问到什么、

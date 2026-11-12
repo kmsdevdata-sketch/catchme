@@ -3,7 +3,8 @@
 **English** · [한국어](getting-started.ko.md) · [日本語](getting-started.ja.md) · [简体中文](getting-started.zh-CN.md)
 
 This guide takes you from nothing to your first report, then through a fix and a re-measure. A full first
-run takes about **15 minutes**, most of it waiting while things build and load runs.
+run takes about **15 minutes** on a small app, most of it waiting while things build and load runs. A large real
+project can take 30–60 minutes the first time: the agent reads more code and designs more scenarios.
 
 - [Before you start](#before-you-start)
 - [1. Install](#1-install)
