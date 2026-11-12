@@ -38,7 +38,8 @@ Python 3 と curl があればそれを使い、なければ catchme がスク�
 Claude Code で:
 
 ```bash
-/plugin install catchme --marketplace kmsdevdata-sketch/catchme
+/plugin marketplace add kmsdevdata-sketch/catchme
+/plugin install catchme@catchme
 ```
 
 > ローカルにクローンしたものを試す場合は、`claude --plugin-dir /path/to/catchme` で Claude Code を起動してください。

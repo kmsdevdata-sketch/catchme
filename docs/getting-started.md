@@ -39,7 +39,8 @@ Python 3 and curl are used if you have them; if not, catchme runs its scripts in
 In Claude Code:
 
 ```bash
-/plugin install catchme --marketplace kmsdevdata-sketch/catchme
+/plugin marketplace add kmsdevdata-sketch/catchme
+/plugin install catchme@catchme
 ```
 
 > Trying it from a local clone instead? Start Claude Code with `claude --plugin-dir /path/to/catchme`.

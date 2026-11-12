@@ -38,7 +38,8 @@ FastAPI 提供了快捷支持，其他技术栈走通用流程 —— Go + Redis
 在 Claude Code 中执行：
 
 ```bash
-/plugin install catchme --marketplace kmsdevdata-sketch/catchme
+/plugin marketplace add kmsdevdata-sketch/catchme
+/plugin install catchme@catchme
 ```
 
 > 想从本地克隆的仓库试用？用 `claude --plugin-dir /path/to/catchme` 启动 Claude Code。

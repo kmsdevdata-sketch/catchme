@@ -38,7 +38,8 @@ Python 3와 curl이 있으면 쓰고, 없으면 스크립트를 컨테이너에�
 Claude Code에서:
 
 ```bash
-/plugin install catchme --marketplace kmsdevdata-sketch/catchme
+/plugin marketplace add kmsdevdata-sketch/catchme
+/plugin install catchme@catchme
 ```
 
 > 로컬에 클론한 걸로 써보려면 `claude --plugin-dir /path/to/catchme`로 Claude Code를 실행하세요.
