@@ -64,6 +64,9 @@ what it found on a branch and re-measure.
 New to it? The **[step-by-step guide](docs/getting-started.md)** walks through every step, what you'll be
 asked, how to read the report, troubleshooting and FAQ.
 
+To remove it: run `teardown` in each project you tested (or ask Claude to clean up), delete `.prod-parity/`,
+then `/plugin uninstall catchme@catchme` and `/plugin marketplace remove catchme`.
+
 ## What it catches
 
 | | Problem | How catchme sees it | Example evidence from a report |
@@ -74,6 +77,24 @@ asked, how to read the report, troubleshooting and FAQ.
 | 🚰 | **Pool exhaustion, connection churn** | connections every 0.25 s vs pool size, new sessions per request | `1.00 new sessions per request` |
 | 🔒 | **Lock contention** | lock waits ≥ 100 ms from the PostgreSQL log, deadlocks | `18 lock waits of 100 ms or longer` |
 | 📉 | **Capacity** | breaking-point search on your p95 / error-rate target | `This spec holds up to 13 concurrent requests` |
+
+See a full report: [Prisma demo, before the fix](resources/prisma/report-prod.en.md) ·
+[after the fix, with the before/after table](resources/prisma/report-after-fix.en.md).
+
+## Found in a real app
+
+Demos have planted bugs. This is from a Spring Boot marketplace app in development, run at its ECS task size
+(0.5 vCPU / 1 GB, the JVM's default heap) against a `db.t3.micro`-sized Postgres:
+
+- **Duplicate payment side effects and a pool deadlock.** 30 simultaneous captures of one payment created 1 order
+  but 10 status histories and 20 notifications, and every request hung until the 30 s timeout. `open-in-view` kept
+  a stale entity across the locked re-check, and an `AFTER_COMMIT` listener needed a second connection while each
+  request still held its first, so the 10-connection Hikari pool deadlocked. The integration tests call the service
+  directly, skip the OSIV filter, and never saw either problem.
+- **A dashboard doing 5,014 queries per request** (p95 13 s): unread messages counted once per inquiry, while a
+  batched method already existed.
+- **A query that will break as data grows:** the batched version binds two parameters per inquiry, so it hits
+  PostgreSQL JDBC's 32,767-parameter limit at about 16k inquiries per store. Unpaginated lists returned up to 3.6 MB.
 
 ## How it works
 
@@ -90,6 +111,19 @@ asked, how to read the report, troubleshooting and FAQ.
 7. **Fix & verify** on a git worktree branch with the same profile, data and scenarios.
 
 Scripts keep the environment and the numbers reproducible; the agent does the judgment.
+
+## Why not just k6?
+
+catchme uses k6 — and Toxiproxy, `pg_stat_statements` and Docker limits. What it adds is everything around them.
+
+| | Load tools (k6, Gatling, JMeter) | APM (Datadog, New Relic) | Integration tests | catchme |
+|---|---|---|---|---|
+| Production-like CPU, DB class, latency, data | you build it | it *is* production | rarely | built from your IaC / specs |
+| Writes the scenarios and test data | you | — | you | the agent, from your code |
+| Explains *why* it's slow (queries/request, EXPLAIN, locks, pool) | latency only | yes, after it ships | — | yes, before it ships |
+| Decides whether a race happened | status codes | — | single-threaded | SQL invariants on the data |
+| Through the full HTTP stack (filters, OSIV, listeners) | yes | yes | often not | yes |
+| Fixes it and re-measures | — | — | — | on a branch, same data |
 
 ## Works with
 
@@ -114,6 +148,12 @@ The Go demo had no detector or reference — an agent set it up with only the sk
 - **Test accounts and test secrets only.**
 - **Your branch is never touched** — fixes go to a new branch in a git worktree.
 
+**Cost and data.** catchme is free and has no telemetry. It runs on your machine inside Claude Code, so a test
+uses your Claude plan like any longer task (the agent reads your code and writes the test files). The only
+network traffic catchme itself causes is pulling Docker images (Postgres, Toxiproxy, k6, your app's build) and,
+if you ask for it, read-only AWS `describe` calls. Your code goes to Claude the same way it does for any other
+Claude Code request.
+
 ## Limitations
 
 Results are a **production approximation**, not a reproduction: CPU generation, disk IOPS, burst-credit depletion,
@@ -125,6 +165,15 @@ cross-AZ variance and real data distributions aren't modeled, and every report s
 - [Getting started](docs/getting-started.md) — install, first run, reading the report, fix & verify, troubleshooting, FAQ
 - [Skill](skills/catchme/SKILL.md) — what the agent reads · [Stack references](skills/catchme/references/) · [AGENTS.md](AGENTS.md) for other agents
 - [Demos](examples/) and [recorded results](resources/README.md)
+
+## Roadmap
+
+- MySQL support
+- Regression reports on pull requests (opt-in GitHub Actions, results in the job summary)
+- GCP and Azure instance presets
+- Disk I/O limits to approximate EBS / RDS storage
+- Replaying real access logs as load
+- Finding the smallest spec that meets your p95 target
 
 ## Contributing
 

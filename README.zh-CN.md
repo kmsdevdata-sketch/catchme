@@ -64,6 +64,9 @@
 第一次使用？**[分步指南](docs/getting-started.zh-CN.md)** 会带你走完每一步，包括会被问到什么、
 如何阅读报告、故障排查和常见问题。
 
+卸载方法：在每个测试过的项目里运行 `teardown`（也可以让 Claude 帮你清理），删除 `.prod-parity/`，
+然后运行 `/plugin uninstall catchme@catchme` 和 `/plugin marketplace remove catchme`。
+
 ## 能发现什么
 
 | | 问题 | catchme 如何发现 | 报告中的证据示例 |
@@ -74,6 +77,22 @@
 | 🚰 | **连接池耗尽、连接频繁重建** | 每 0.25 s 采样连接数并与连接池大小对比，统计每请求新建会话数 | `1.00 new sessions per request` |
 | 🔒 | **锁竞争** | 从 PostgreSQL 日志中提取 ≥ 100 ms 的锁等待和死锁 | `18 lock waits of 100 ms or longer` |
 | 📉 | **容量** | 按你的 p95 / 错误率目标搜索极限点 | `This spec holds up to 13 concurrent requests` |
+
+完整报告示例：[Prisma 示例，修复前](resources/prisma/report-prod.en.md) ·
+[修复后，含修复前后对比表](resources/prisma/report-after-fix.en.md)（英文）。
+
+## 在真实应用中发现的问题
+
+示例里的 bug 是故意埋的。下面来自一个开发中的 Spring Boot 电商平台应用，按它的 ECS 任务规格（0.5 vCPU / 1 GB，
+JVM 默认堆大小）和 `db.t3.micro` 级别的 Postgres 运行：
+
+- **支付副作用重复与连接池死锁。** 对同一笔支付同时发起 30 次确认，只生成 1 个订单，却写入了 10 条状态历史和
+  20 条通知，所有请求都卡到 30 秒超时。`open-in-view` 让加锁后的二次检查仍读到旧实体；`AFTER_COMMIT` 监听器在每个
+  请求已占用一个连接的情况下又要第二个连接，于是 10 个连接的 Hikari 池死锁。集成测试直接调用 service，不经过 OSIV
+  过滤器，两个问题都没发现。
+- **每个请求 5,014 条查询的仪表盘**（p95 13 秒）：未读消息按每个咨询单独计数，而批量方法其实早就有了。
+- **数据量增长后会出错的查询：** 批量版本每个咨询绑定 2 个参数，单店咨询约 1.6 万条时就会超过 PostgreSQL JDBC
+  32,767 个绑定参数的上限。没有分页的列表响应最大 3.6 MB。
 
 ## 工作原理
 
@@ -90,6 +109,19 @@
 7. **修复并验证** —— 在 git worktree 分支上，使用相同的规格、数据和场景。
 
 脚本保证环境和数据可复现，判断交给 agent。
+
+## 为什么不直接用 k6？
+
+catchme 内部就用 k6，还有 Toxiproxy、`pg_stat_statements` 和 Docker 资源限制。它补上的是这些工具之外的部分。
+
+| | 压测工具（k6、Gatling、JMeter） | APM（Datadog、New Relic） | 集成测试 | catchme |
+|---|---|---|---|---|
+| 接近生产的 CPU、数据库规格、延迟、数据量 | 自己搭 | 就是生产环境 | 很少 | 从 IaC / 规格自动搭建 |
+| 编写场景和测试数据 | 自己写 | — | 自己写 | agent 根据代码编写 |
+| 解释*为什么*慢（每请求查询数、EXPLAIN、锁、连接池） | 只有延迟 | 上线之后 | — | 上线之前 |
+| 判断是否发生竞态 | 状态码 | — | 单线程 | 针对数据的 SQL 不变量 |
+| 经过完整 HTTP 链路（过滤器、OSIV、监听器） | 是 | 是 | 通常不经过 | 是 |
+| 修复并重新测量 | — | — | — | 在分支上，用同一份数据 |
 
 ## 支持的技术栈
 
@@ -114,6 +146,10 @@ Go 示例没有现成的检测器或参考文档 —— 由 agent 仅凭 skill �
 - **只使用测试账号和测试密钥。**
 - **绝不改动你的分支** —— 修复会提交到 git worktree 中的新分支。
 
+**费用与数据。** catchme 免费，没有遥测。它在你本机的 Claude Code 里运行，所以一次测试会像其他较长的任务一样消耗
+你的 Claude 套餐额度（agent 会读代码、写测试文件）。catchme 自身产生的网络流量只有拉取 Docker 镜像（Postgres、
+Toxiproxy、k6、你的应用构建），以及你要求时才进行的只读 AWS `describe` 调用。代码发给 Claude 的方式和其他 Claude Code 请求完全一样。
+
 ## 局限性
 
 结果是对生产环境的**近似模拟**，而非完全复现：CPU 代际、磁盘 IOPS、突发积分耗尽、
@@ -125,6 +161,15 @@ Go 示例没有现成的检测器或参考文档 —— 由 agent 仅凭 skill �
 - [入门指南](docs/getting-started.zh-CN.md) —— 安装、首次运行、阅读报告、修复与验证、故障排查、常见问题
 - [Skill](skills/catchme/SKILL.md) —— agent 读取的内容 · [技术栈参考](skills/catchme/references/) · 供其他 agent 使用的 [AGENTS.md](AGENTS.md)
 - [示例](examples/)和[已记录的结果](resources/README.md)
+
+## 路线图
+
+- MySQL 支持
+- Pull Request 回归报告（可选启用的 GitHub Actions，结果显示在 job summary）
+- GCP 和 Azure 实例预设
+- 模拟 EBS / RDS 存储的磁盘 I/O 限制
+- 回放真实访问日志作为负载
+- 找出满足 p95 目标的最小规格
 
 ## 参与贡献
 
